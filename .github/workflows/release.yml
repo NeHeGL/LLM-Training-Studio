@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. v1.2.3)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Create and push tag
+        run: |
+          git tag ${{ inputs.version }}
+          git push origin ${{ inputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.3.2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: "LLM Training Studio ${{ inputs.version }}"
+          body: |
+            ## What's New in ${{ inputs.version }}
+
+            ### New Models (11 added)
+            All Apache 2.0 or MIT — no HuggingFace account, no token, no gating.
+
+            | Model | Size | Notes |
+            |---|---|---|
+            | `HuggingFaceTB/SmolLM2-360M` | 360M | Smallest — rapid testing / tiny VRAM |
+            | `Qwen/Qwen3-0.6B` | 0.6B | Qwen3 generation — hybrid thinking mode |
+            | `Qwen/Qwen3-1.7B` | 1.7B | Stronger than Qwen2.5-1.5B |
+            | `microsoft/Phi-3.5-mini-instruct` | 3.8B | 128K context, outperforms many 7B models |
+            | `Qwen/Qwen3-4B` | 4B | Outperforms many older 7B models |
+            | `Qwen/Qwen3-8B` | 8B | Latest Qwen — strong reasoning & instruction following |
+            | `allenai/OLMo-2-1124-7B` | 7B | Fully open (data + code + weights) |
+            | `mistralai/Mistral-7B-v0.3` | 7B | Improved tokenizer over v0.1 |
+            | `allenai/OLMo-2-1124-13B` | 13B | Fully open mid-size model |
+            | `Qwen/Qwen3-14B` | 14B | Latest Qwen — reasoning, coding, multilingual |
+            | `Qwen/Qwen3-32B` | 32B | Top open-source quality, latest Qwen generation |
+
+            ### Bug Fixes
+            - **BAT silent-close** — `launch_web.bat` and `launch_app.bat` now detect if the server is already running and open the browser silently without flashing a console window. When starting fresh, the window re-launches minimized so it doesn't take focus.
+            - **Torch CUDA false-positive** — Package Manager was incorrectly flagging PyTorch as outdated on CUDA 12.8 machines. The CUDA wheel detection now correctly maps the installed index URL to the running CUDA version.
+
+            ---
+
+            ### Quick Start
+            1. Download **Source code (zip)** below
+            2. Extract anywhere on your machine
+            3. Run `install.bat` once to set up dependencies
+            4. Launch with `start_web.bat` (browser) or `start_app.bat` (desktop window)
