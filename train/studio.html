@@ -116,6 +116,7 @@
                 <option value="f16">f16 — lossless, ~14 GB</option>
                 <option value="q8_0">q8_0 — near-lossless, ~8 GB</option>
                 <option value="q4_k_m">q4_k_m — good quality, ~4 GB</option>
+                <option value="iq4_xs">iq4_xs — imatrix-calibrated, ~3.6 GB</option>
                 <option value="q4_0">q4_0 — smallest, ~4 GB</option>
               </select>
             </div>
@@ -2278,22 +2279,19 @@ function _updateExportHint() {
   const chosen  = sel ? sel.value : 'auto';
   const vramGb  = _catalogData ? (_catalogData.vram_gb || 0) : 0;
 
-  // Resolve what type will actually be used
-  let resolvedType;
-  if (chosen !== 'auto') {
-    resolvedType = chosen;
-  } else {
-    // q4_k_m is always the best default — mirrors generate_llm.py auto-selection.
-    // f16 needs 16+ GB VRAM headroom just to load for inference (poor experience).
-    // q8_0 is only useful for near-lossless eval work. q4_k_m runs on any hardware.
-    resolvedType = 'q4_k_m';
-  }
+  // Resolve what type will actually be used. The server is the single source
+  // of truth for what "Auto" means (see _resolve_auto_gguf_type() in
+  // server.py, mirroring generate_llm.py's real VRAM-detection logic) — we
+  // just read its answer instead of re-deriving VRAM tiers here.
+  const resolvedType = chosen !== 'auto' ? chosen :
+    (_catalogData && _catalogData.auto_gguf_type) || 'q4_k_m';
 
   // Human-readable labels for each type
   const typeLabels = {
     f16:    'f16 (lossless, ~14gb)',
     q8_0:   'q8_0 (near-lossless, ~8gb)',
     q4_k_m: 'q4_k_m (good quality, ~4gb)',
+    iq4_xs: 'iq4_xs (imatrix-calibrated, ~3.6gb)',
     q4_0:   'q4_0 (smallest, ~4gb)',
   };
 
@@ -2315,8 +2313,11 @@ function _updateExportHint() {
   else                   mergeMin = paramsB * 2.5;
 
   // GGUF conversion time estimate (CPU, scales with output size)
-  const sizeGb = { f16: 2.0, q8_0: 1.1, q4_k_m: 0.55, q4_0: 0.55 };
-  const convMin = paramsB * (sizeGb[resolvedType] || 0.7) * 0.4;  // ~0.4 min/GB·B-param
+  const sizeGb = { f16: 2.0, q8_0: 1.1, q4_k_m: 0.55, iq4_xs: 0.51, q4_0: 0.55 };
+  let convMin = paramsB * (sizeGb[resolvedType] || 0.7) * 0.4;  // ~0.4 min/GB·B-param
+  // iq4_xs also runs llama-imatrix first (a CPU forward pass over the training
+  // set) — small but not free, roughly comparable to the quantize step itself.
+  if (resolvedType === 'iq4_xs') convMin += paramsB * 0.51 * 0.4;
 
   const totalMin = Math.round(mergeMin + convMin);
   let timeStr;
@@ -2338,16 +2339,18 @@ function _updateExportHint() {
     parts.push('<span style="color:#94a3b8;">Auto selects </span><span style="color:#e2e8f0;">' + typeLabels[resolvedType] + '</span>');
   }
 
-  // Warn about two-step requirement for q4_k_m / q4_0
-  if (resolvedType === 'q4_k_m' || resolvedType === 'q4_0') {
+  // Warn about two-step requirement for q4_k_m / q4_0 / iq4_xs
+  if (resolvedType === 'q4_k_m' || resolvedType === 'q4_0' || resolvedType === 'iq4_xs') {
+    const isImatrix = resolvedType === 'iq4_xs';
     parts.push(
       '<div style="margin-top:4px;padding:6px 8px;background:#1a1200;border:1px solid #fbbf2433;border-radius:5px;display:flex;flex-direction:column;gap:3px;">' +
-        '<div style="color:#fbbf24;font-weight:600;font-size:0.72rem;">⚠ Requires two steps to produce ' + resolvedType + ':</div>' +
+        '<div style="color:#fbbf24;font-weight:600;font-size:0.72rem;">⚠ Requires ' + (isImatrix ? 'three' : 'two') + ' steps to produce ' + resolvedType + ':</div>' +
         '<div style="color:#64748b;padding-left:8px;border-left:2px solid #fbbf2444;">' +
           '<div><span style="color:#94a3b8;">Step 1</span> — HF SafeTensors → f16 GGUF (~14 GB)</div>' +
-          '<div><span style="color:#94a3b8;">Step 2</span> — llama-quantize → ' + resolvedType + ' (~4 GB)</div>' +
+          (isImatrix ? '<div><span style="color:#94a3b8;">Step 2</span> — llama-imatrix calibrates against this model\'s own training data</div>' : '') +
+          '<div><span style="color:#94a3b8;">Step ' + (isImatrix ? '3' : '2') + '</span> — llama-quantize → ' + resolvedType + (isImatrix ? ' (~3.6 GB, imatrix-boosted)' : ' (~4 GB)') + '</div>' +
         '</div>' +
-        '<div style="color:#6b7fa0;font-size:0.68rem;">llama-quantize is installed automatically — no extra setup needed.</div>' +
+        '<div style="color:#6b7fa0;font-size:0.68rem;">llama-quantize' + (isImatrix ? ' and llama-imatrix are' : ' is') + ' installed automatically — no extra setup needed.</div>' +
       '</div>'
     );
   }
@@ -2404,26 +2407,36 @@ function openGenerateConsole(btn) {
     f16:    'f16 — lossless ~14 GB',
     q8_0:   'q8_0 — ~8 GB',
     q4_k_m: 'q4_k_m — ~4 GB',
+    iq4_xs: 'iq4_xs — ~3.6 GB (imatrix)',
     q4_0:   'q4_0 — ~4 GB (smallest)',
   };
   _gcAppendLine('📦 Exporting as GGUF (' + (ggufLabels[ggufType] || ggufType) + ') — single file for Ollama, LM Studio & chat tester');
 
   // Phase tracking — detect which stage of the export we're in and show a
   // persistent phase banner above the log lines for clear progress feedback.
-  // For q4_k_m/q4_0, there are 4 phases (f16 convert + quantize are separate steps).
-  // For f16/q8_0, there are 3 phases (single-step GGUF conversion).
-  // Resolve actual GGUF type — 'auto' always maps to q4_k_m (same logic as generate_llm.py)
-  const _resolvedGgufType = (ggufType === 'auto') ? 'q4_k_m' : ggufType;
-  const _isTwoStep = (_resolvedGgufType === 'q4_k_m' || _resolvedGgufType === 'q4_0');
-  let _gcPhase = 0;  // 0=connecting, 1=merging, 2=saving, 3=converting/f16, 4=quantizing(two-step only), 5=registering
+  // 'auto' resolves to whatever the server already resolved it to (see
+  // auto_gguf_type in /model-catalog — same value _updateExportHint() uses).
+  const _resolvedGgufType = ggufType !== 'auto' ? ggufType :
+    ((_catalogData && _catalogData.auto_gguf_type) || 'q4_k_m');
+  const _isImatrix = (_resolvedGgufType === 'iq4_xs');
+  const _isTwoStep = (_resolvedGgufType === 'q4_k_m' || _resolvedGgufType === 'q4_0' || _isImatrix);
+  let _gcPhase = 0;  // 0=connecting, 1=merging, 2=saving, 3=converting/f16, 4=imatrix(iq4_xs only), 5=quantizing, 6=registering
 
   let _gcExportFolder = '';  // populated when generate_llm.py prints the Watch line
   let _gcOllamaTag    = '';  // populated when generate_llm.py prints the OLLAMA_TAG line
 
-  // Phase steps — built dynamically based on whether it's a 2-step GGUF conversion.
-  // For q4_k_m/q4_0: merge → save weights → export f16 GGUF → quantize to final format → (optionally) register with Ollama
-  // For f16/q8_0:    merge → save weights → export directly to final GGUF → (optionally) register with Ollama
-  const phaseSteps = _isTwoStep ? [
+  // Phase steps — built dynamically based on the conversion path.
+  // iq4_xs: merge → save → export f16 GGUF → generate imatrix → quantize → (optionally) register
+  // q4_k_m/q4_0: merge → save weights → export f16 GGUF → quantize to final format → (optionally) register
+  // f16/q8_0:    merge → save weights → export directly to final GGUF → (optionally) register
+  const phaseSteps = _isImatrix ? [
+    { icon: '🔀', label: `Step 1 — Merging LoRA adapter into base model`,                                          color: '#7dd3fc' },
+    { icon: '💾', label: `Step 2 — Saving merged weights to disk`,                                                  color: '#a78bfa' },
+    { icon: '📦', label: `Step 3 — Exporting merged model → f16 GGUF  (RAM will spike — this is normal)`,          color: '#38bdf8' },
+    { icon: '🧮', label: `Step 4 — Generating importance matrix from training data`,                                color: '#f472b6' },
+    { icon: '🔧', label: `Step 5 — Quantizing f16 GGUF → iq4_xs  (final, ~3.6 GB)`,                                color: '#fb923c' },
+    { icon: '✅', label: 'Registering with Ollama…',                                                               color: '#34d399' },
+  ] : _isTwoStep ? [
     { icon: '🔀', label: `Step 1 — Merging LoRA adapter into base model`,                                          color: '#7dd3fc' },
     { icon: '💾', label: `Step 2 — Saving merged weights to disk`,                                                  color: '#a78bfa' },
     { icon: '📦', label: `Step 3 — Exporting merged model → f16 GGUF  (RAM will spike — this is normal)`,          color: '#38bdf8' },
@@ -2472,7 +2485,8 @@ function openGenerateConsole(btn) {
           if (/\[export\]\s*(Merge device|Loading base model|Allocating model|merging lora)/i.test(t) && _gcPhase < 2) _setPhase(2);
           else if (/\[export\]\s*(Saving|writing.*safetensor|safetensor.*sav)/i.test(t) && _gcPhase < 2) _setPhase(2);
           else if (/\[export\]\s*Converting SafeTensors|convert_hf_to_gguf/i.test(t) && _gcPhase < 3) _setPhase(3);
-          else if (_isTwoStep && /\[export\]\s*Step 2.*[Qq]uantiz/i.test(t) && _gcPhase < 4) _setPhase(4);
+          else if (_isImatrix && /\[export\]\s*Generating importance matrix/i.test(t) && _gcPhase < 4) _setPhase(4);
+          else if (_isTwoStep && /\[export\]\s*Step 2.*[Qq]uantiz/i.test(t) && _gcPhase < (_isImatrix ? 5 : 4)) _setPhase(_isImatrix ? 5 : 4);
           else if (/\[export\]\s*(Registering|Modelfile written|ollama create|ollama run)/i.test(t) && _gcPhase < phaseSteps.length) _setPhase(phaseSteps.length);
           // Extract export folder from the "Watch this folder" hint line
           const watchMatch = t.match(/\*{3}\s*Watch this folder for growing files:\s*(.+?)\s*\*{3}/i);

@@ -194,8 +194,8 @@ echo   Installation complete!
 echo  ============================================================
 echo.
 echo   Virtual environment: .venv\
-echo   To start LLM Training Studio, run:  launch_web.bat
-echo   Or desktop app:                     launch_app.bat
+echo   To start LLM Training Studio, run:  start_web.bat
+echo   Or desktop app:                     start_app.bat
 echo.
 echo   GPU:      !GPU_NAME!
 echo   CUDA:     !CUDA_VER!  (!GPU_TAG!)

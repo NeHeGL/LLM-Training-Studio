@@ -15,6 +15,7 @@ API:
     GET  /stats             — dataset statistics
 """
 
+import functools
 import json
 import os
 import random
@@ -265,9 +266,25 @@ MODEL_CATALOG = [
         "min_vram_4bit": 3,
         "min_vram_fp16": 9,
         "description": "Qwen3 4B — Apache 2.0, no gating. Excellent quality at 4B; outperforms many older 7B models.",
+        "tag": "4B",
+    },
+    {
+        "id": "HuggingFaceTB/SmolLM3-3B",
+        "params_b": 3,
+        "min_vram_4bit": 3,
+        "min_vram_fp16": 8,
+        "description": "SmolLM3 3B — Apache 2.0, no gating. Fully open data + training recipe; long-context reasoner, punches above its weight.",
+        "tag": "3B",
+    },
+    {
+        "id": "Qwen/Qwen3.5-4B",
+        "params_b": 4,
+        "min_vram_4bit": 3,
+        "min_vram_fp16": 9,
+        "description": "Qwen3.5 4B — Apache 2.0, no gating. Newer generation than Qwen3-4B.",
         "tag": "4B ⭐",
     },
-    # ── 7–8B ──────────────────────────────────────────────────────────────────
+    # ── 7–9B ──────────────────────────────────────────────────────────────────
     {
         "id": "Qwen/Qwen2.5-7B",
         "params_b": 7,
@@ -316,6 +333,14 @@ MODEL_CATALOG = [
         "description": "Pythia 6.9B — Apache 2.0, no gating. Standard GPT-NeoX architecture, very reliable for fine-tuning.",
         "tag": "6.9B",
     },
+    {
+        "id": "Qwen/Qwen3.5-9B",
+        "params_b": 9,
+        "min_vram_4bit": 6,
+        "min_vram_fp16": 19,
+        "description": "Qwen3.5 9B — Apache 2.0, no gating. Newer generation; fills the gap between 8B and 13B nicely.",
+        "tag": "9B",
+    },
     # ── 13–14B ────────────────────────────────────────────────────────────────
     {
         "id": "allenai/OLMo-2-1124-13B",
@@ -340,6 +365,15 @@ MODEL_CATALOG = [
         "min_vram_fp16": 29,
         "description": "Qwen3 14B — Apache 2.0, no gating. Latest generation; strong reasoning, coding, and multilingual.",
         "tag": "14B",
+    },
+    # ── 27B ───────────────────────────────────────────────────────────────────
+    {
+        "id": "Qwen/Qwen3.5-27B",
+        "params_b": 27,
+        "min_vram_4bit": 17,
+        "min_vram_fp16": 55,
+        "description": "Qwen3.5 27B — Apache 2.0, no gating. Dense model; strong step up from 14B for 24+ GB cards, below the 32B tier.",
+        "tag": "27B",
     },
     # ── 32B ───────────────────────────────────────────────────────────────────
     {
@@ -537,6 +571,34 @@ def _get_model_size_tag(base_model_id):
         pass
     return None
 
+@functools.lru_cache(maxsize=1)
+def _resolve_auto_gguf_type():
+    """Mirror generate_llm.py's `--gguf-type auto` VRAM tiers, so filenames
+    predicted here match what the exporter actually produces when the user
+    picks "Auto" in the Studio. Kept in sync manually with _gpu_info()'s
+    logic in generate_llm.py — see that file if these tiers ever change.
+
+    Cached: installed VRAM can't change without a process restart, and this
+    is called from _build_gguf_filename() on every /pipeline-state poll.
+    The Studio itself is the only caller here — both it and generate_llm.py
+    run as one-shot Python invocations, so there's no cross-process cache to
+    share; the JS side instead reads the resolved value this function
+    produces (see /model-catalog's "auto_gguf_type" field) rather than
+    re-deriving the VRAM tiers itself.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            if vram >= 24:
+                return 'q8_0'
+            elif vram >= 12:
+                return 'q4_k_m'
+    except Exception:
+        pass
+    return 'iq4_xs'
+
+
 def _build_gguf_filename(model_name, base_model_id, gguf_type):
     """Build the exact GGUF filename that generate_llm.py produces.
     Format: {ModelName}_{size}_{quant}-{family}.gguf
@@ -548,7 +610,7 @@ def _build_gguf_filename(model_name, base_model_id, gguf_type):
     # Strip path-illegal chars from model name and lowercase (mirrors generate_llm.py safe_name_for_file)
     safe_name = _re.sub(r'[<>:"/\\|?*]', '_', model_name).strip('. ').lower() or 'model'
     # quant suffix: lowercase, non-alnum/underscore -> underscore
-    resolved_type = 'q4_k_m' if gguf_type in (None, 'auto') else gguf_type
+    resolved_type = _resolve_auto_gguf_type() if gguf_type == 'auto' else (gguf_type or 'q4_k_m')
     quant_suffix  = _re.sub(r'[^a-z0-9_]', '_', resolved_type.lower())
     # family and size from HF cached config
     family        = _get_model_family(base_model_id)
@@ -1221,7 +1283,15 @@ def create_app():
         elif vram > 0:
             recommended_base = "Qwen/Qwen3-1.7B"
 
-        return jsonify({"vram_gb": vram, "bf16": bf16, "models": result, "recommended_base": recommended_base})
+        return jsonify({
+            "vram_gb": vram,
+            "bf16": bf16,
+            "models": result,
+            "recommended_base": recommended_base,
+            # Resolved once here so the frontend never re-derives VRAM tiers itself —
+            # see _resolve_auto_gguf_type()'s docstring for why this exists.
+            "auto_gguf_type": _resolve_auto_gguf_type(),
+        })
 
     @app.route("/models/update", methods=["POST"])
     def update_model():
@@ -2012,7 +2082,7 @@ def create_app():
         from flask import Response, stream_with_context
 
         # Read GGUF options from query string — set by the UI export panel
-        gguf_type         = request.args.get("gguf_type", "auto")       # auto|f16|q8_0|q4_k_m|q4_0
+        gguf_type         = request.args.get("gguf_type", "auto")       # auto|f16|q8_0|q4_k_m|q4_0|iq4_xs
         keep_safetensors  = request.args.get("keep_safetensors", "0")   # 1 = keep
 
         def generate():
@@ -2021,8 +2091,11 @@ def create_app():
             env["PYTHONIOENCODING"] = "utf-8"
             cmd = [sys.executable, "-X", "utf8", "-u",
                    os.path.join(TRAIN_DIR, "generate_llm.py")]
-            # Pass GGUF type if the user specified one (not "auto")
-            if gguf_type and gguf_type != "auto":
+            # "auto" is passed through as a real flag now — generate_llm.py picks
+            # the best type for the LOCAL machine's detected VRAM. Omitting the
+            # flag entirely (gguf_type falsy) falls back to generate_llm.py's own
+            # plain default (q4_k_m — portable, for sharing with others).
+            if gguf_type:
                 cmd += ["--gguf-type", gguf_type]
             # Pass --keep-safetensors if requested
             if keep_safetensors == "1":

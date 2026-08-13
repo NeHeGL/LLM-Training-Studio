@@ -145,26 +145,39 @@ python train/generate_llm.py
 
 Merges the LoRA adapter into the full base model and exports a `.gguf` file. All flags:
 
-| Flag                  | Default   | Effect                                                        |
-|-----------------------|-----------|---------------------------------------------------------------|
-| `--gguf-type TYPE`    | q4_k_m    | GGUF quantization: `q4_k_m`, `q8_0`, `f16`, `q4_0`            |
-| `--no-gguf`           | off       | Skip GGUF — SafeTensors only (Ollama/LM Studio won't load it) |
-| `--keep-safetensors`  | off       | Keep SafeTensors alongside the GGUF (saves ~15 GB by default) |
-| `--no-bf16`           | off       | Force fp16 instead of bfloat16                                |
-| `--lora PATH`         | auto      | Custom LoRA adapter directory                                 |
-| `--out PATH`          | auto      | Custom export destination                                     |
+| Flag                  | Default | Effect                                                                  |
+|-----------------------|---------|--------------------------------------------------------------------------|
+| `--gguf-type TYPE`    | q4_k_m  | GGUF quantization: `q4_k_m`, `q8_0`, `f16`, `q4_0`, `iq4_xs`, `auto`     |
+| `--imatrix`           | off     | Calibrate against this model's own training data (implied by `iq4_xs`)  |
+| `--no-gguf`           | off     | Skip GGUF — SafeTensors only (Ollama/LM Studio won't load it)           |
+| `--keep-safetensors`  | off     | Keep SafeTensors alongside the GGUF (saves ~15 GB by default)           |
+| `--no-bf16`           | off     | Force fp16 instead of bfloat16                                          |
+| `--lora PATH`         | auto    | Custom LoRA adapter directory                                           |
+| `--out PATH`          | auto    | Custom export destination                                               |
+
+The plain default (no `--gguf-type` at all) is always `q4_k_m` — fixed and portable, since the point of
+the default is a file that runs on hardware you don't control. `--gguf-type auto` is a separate, explicit
+opt-in: it detects **this machine's** VRAM and picks the best type for testing locally on the same GPU
+(24+ GB → q8_0, 12+ GB → q4_k_m, below that → iq4_xs) — don't use it for a file you intend to share,
+since a bigger GPU here doesn't help whoever you send it to.
 
 Examples:
 
 ```
-# Default: auto-select best GGUF type for your GPU
+# Default: portable q4_k_m, runs on any hardware
 python train/generate_llm.py
+
+# Auto-pick the best type for THIS machine's VRAM (for local testing, not sharing)
+python train/generate_llm.py --gguf-type auto
 
 # Export as q8_0 (near-lossless, ~8 GB)
 python train/generate_llm.py --gguf-type q8_0
 
 # Export as f16 (lossless, ~14 GB)
 python train/generate_llm.py --gguf-type f16
+
+# Export as iq4_xs — smaller than q4_k_m, imatrix-calibrated against the model's own training data
+python train/generate_llm.py --gguf-type iq4_xs
 
 # Keep SafeTensors files (needed for HuggingFace chat mode)
 python train/generate_llm.py --keep-safetensors
@@ -265,12 +278,14 @@ If Ollama is installed and running, the model is automatically registered.
 
 **GGUF types** (select in Studio or via `--gguf-type`):
 
-| Type      | Size   | Notes                                                                                      |
-|-----------|--------|--------------------------------------------------------------------------------------------|
-| `q4_k_m`  | ~4 GB  | **Default.** Best quality/size balance. Runs on any hardware. Requires `llama-quantize`.   |
-| `q8_0`    | ~8 GB  | Near-lossless. Single-step, no extra tools.                                                |
-| `f16`     | ~14 GB | Lossless full precision. Needs 16+ GB VRAM to load for inference.                          |
-| `q4_0`    | ~4 GB  | Fastest inference, lowest quality.                                                         |
+| Type     | Size    | Notes                                                                                                                      |
+|----------|---------|-----------------------------------------------------------------------------------------------------------------------------|
+| `q4_k_m` | ~4 GB   | **Default.** Best quality/size balance. Runs on any hardware. Requires `llama-quantize`.                                   |
+| `iq4_xs` | ~3.6 GB | Smaller than q4_k_m. Calibrated against this model's own training data (`llama-imatrix`) to close most of the quality gap. |
+| `q8_0`   | ~8 GB   | Near-lossless. Single-step, no extra tools.                                                                                |
+| `f16`    | ~14 GB  | Lossless full precision. Needs 16+ GB VRAM to load for inference.                                                          |
+| `q4_0`   | ~4 GB   | Fastest inference, lowest quality.                                                                                         |
+| `auto`   | varies  | Picks q8_0/q4_k_m/iq4_xs based on **this machine's** detected VRAM — for local testing, not for sharing the file.          |
 
 After export, the SafeTensors intermediate files used to build the GGUF are deleted to reclaim ~15 GB of disk space. Existing `.gguf` files for other quant types are never touched — exporting `q4_k_m` won't delete your existing `q8_0`. Pass `--keep-safetensors` to retain the SafeTensors files (needed for `chat_test/server.py` HuggingFace mode).
 
@@ -327,31 +342,36 @@ Both single-line and multi-line answers are supported. Pairs can be separated by
 
 All models are fully open — no HuggingFace account, no token, no gating. They download automatically on first training run.
 
-| Model                                | Size  | Actual   | License    | Min VRAM (4-bit) | Notes                                              |
-|--------------------------------------|-------|----------|------------|------------------|----------------------------------------------------|
-| `HuggingFaceTB/SmolLM2-360M`         | 360M  | 360M     | Apache 2.0 | 1 GB             | Smallest — rapid testing or extremely limited VRAM |
-| `Qwen/Qwen2.5-0.5B`                  | 0.5B  | 0.5B     | Qwen       | 1 GB             | Smallest Qwen — very limited VRAM only             |
-| `Qwen/Qwen3-0.6B`                    | 0.6B  | 0.6B     | Apache 2.0 | 1 GB             | Qwen3 — hybrid thinking, newest architecture       |
-| `Qwen/Qwen2.5-1.5B`                  | 1.5B  | 1.5B     | Qwen       | 2 GB             | Good entry-level option                            |
-| `Qwen/Qwen3-1.7B`                    | 1.7B  | 1.7B     | Apache 2.0 | 2 GB             | Qwen3 — stronger than Qwen2.5-1.5B                |
-| `HuggingFaceTB/SmolLM2-1.7B`         | 1.7B  | 1.7B     | Apache 2.0 | 2 GB             | Efficient for size                                 |
-| `EleutherAI/pythia-1.4b`             | 1.4B  | 1.4B     | Apache 2.0 | 2 GB             | Rock-solid GPT-NeoX architecture, no custom code   |
-| `microsoft/phi-2`                    | 2.7B  | 2.8B     | MIT        | 2 GB             | Strong reasoning, "textbook" trained               |
-| `microsoft/Phi-3.5-mini-instruct`    | 3.8B  | 3.8B     | MIT        | 3 GB             | 128K context, outperforms many 7B models           |
-| `Qwen/Qwen2.5-3B`                    | 3B    | 3.1B     | Qwen       | 3 GB             | Good size/capability balance                       |
-| `Qwen/Qwen3-4B`                      | 4B    | 4B       | Apache 2.0 | 3 GB             | ⭐ Qwen3 — outperforms many older 7B models        |
-| `Qwen/Qwen2.5-7B`                    | 7B    | **7.6B** | Qwen       | 5 GB             | ⭐ **Recommended** — best for 8–16 GB VRAM         |
-| `Qwen/Qwen3-8B`                      | 8B    | 8B       | Apache 2.0 | 5 GB             | ⭐ Latest Qwen — strong reasoning & instruction following |
-| `allenai/OLMo-2-1124-7B`             | 7B    | 7B       | Apache 2.0 | 5 GB             | Fully open (data+code), great for research         |
-| `mistralai/Mistral-7B-v0.3`          | 7B    | 7.2B     | Apache 2.0 | 5 GB             | Improved tokenizer over v0.1                       |
-| `mistralai/Mistral-7B-v0.1`          | 7B    | 7.2B     | Apache 2.0 | 5 GB             | Original release, well-tested for fine-tuning      |
-| `EleutherAI/pythia-6.9b`             | 6.9B  | 6.9B     | Apache 2.0 | 5 GB             | Standard GPT-NeoX, very reliable for fine-tuning   |
-| `allenai/OLMo-2-1124-13B`            | 13B   | 13B      | Apache 2.0 | 8 GB             | Fully open, strong mid-size model                  |
-| `Qwen/Qwen2.5-14B`                   | 14B   | 14B      | Qwen       | 9 GB             | Excellent for 24 GB cards                          |
-| `Qwen/Qwen3-14B`                     | 14B   | 14B      | Apache 2.0 | 9 GB             | Latest Qwen — reasoning, coding, multilingual      |
-| `Qwen/Qwen2.5-32B`                   | 32B   | 32B      | Qwen       | 20 GB            | Near GPT-4 quality                                 |
-| `Qwen/Qwen3-32B`                     | 32B   | 32B      | Apache 2.0 | 20 GB            | Top open-source quality, latest Qwen generation    |
-| `Qwen/Qwen2.5-72B`                   | 72B   | 72B      | Qwen       | 42 GB            | Top open-source quality — multi-GPU only           |
+| Model                             | Size | Actual   | License    | Min VRAM (4-bit) | Notes                                                    |
+|-----------------------------------|------|----------|------------|------------------|----------------------------------------------------------|
+| `HuggingFaceTB/SmolLM2-360M`      | 360M | 360M     | Apache 2.0 | 1 GB             | Smallest — rapid testing or extremely limited VRAM       |
+| `Qwen/Qwen2.5-0.5B`               | 0.5B | 0.5B     | Qwen       | 1 GB             | Smallest Qwen — very limited VRAM only                   |
+| `Qwen/Qwen3-0.6B`                 | 0.6B | 0.6B     | Apache 2.0 | 1 GB             | Qwen3 — hybrid thinking, newest architecture             |
+| `Qwen/Qwen2.5-1.5B`               | 1.5B | 1.5B     | Qwen       | 2 GB             | Good entry-level option                                  |
+| `Qwen/Qwen3-1.7B`                 | 1.7B | 1.7B     | Apache 2.0 | 2 GB             | Qwen3 — stronger than Qwen2.5-1.5B                       |
+| `HuggingFaceTB/SmolLM2-1.7B`      | 1.7B | 1.7B     | Apache 2.0 | 2 GB             | Efficient for size                                       |
+| `EleutherAI/pythia-1.4b`          | 1.4B | 1.4B     | Apache 2.0 | 2 GB             | Rock-solid GPT-NeoX architecture, no custom code         |
+| `microsoft/phi-2`                 | 2.7B | 2.8B     | MIT        | 2 GB             | Strong reasoning, "textbook" trained                     |
+| `microsoft/Phi-3.5-mini-instruct` | 3.8B | 3.8B     | MIT        | 3 GB             | 128K context, outperforms many 7B models                 |
+| `Qwen/Qwen2.5-3B`                 | 3B   | 3.1B     | Qwen       | 3 GB             | Good size/capability balance                             |
+| `Qwen/Qwen3-4B`                   | 4B   | 4B       | Apache 2.0 | 3 GB             | Qwen3 — outperforms many older 7B models                 |
+| `HuggingFaceTB/SmolLM3-3B`        | 3B   | 3B       | Apache 2.0 | 3 GB             | Fully open data + training recipe; long-context reasoner |
+| `Qwen/Qwen3.5-4B`                 | 4B   | 4B       | Apache 2.0 | 3 GB             | ⭐ Newer generation than Qwen3-4B                         |
+| `Qwen/Qwen2.5-7B`                 | 7B   | **7.6B** | Qwen       | 5 GB             | ⭐ **Recommended** — best for 8–16 GB VRAM                |
+| `Qwen/Qwen3-8B`                   | 8B   | 8B       | Apache 2.0 | 5 GB             | ⭐ Latest Qwen — strong reasoning & instruction following |
+| `allenai/OLMo-2-1124-7B`          | 7B   | 7B       | Apache 2.0 | 5 GB             | Fully open (data+code), great for research               |
+| `mistralai/Mistral-7B-v0.3`       | 7B   | 7.2B     | Apache 2.0 | 5 GB             | Improved tokenizer over v0.1                             |
+| `mistralai/Mistral-7B-v0.1`       | 7B   | 7.2B     | Apache 2.0 | 5 GB             | Original release, well-tested for fine-tuning            |
+| `EleutherAI/pythia-6.9b`          | 6.9B | 6.9B     | Apache 2.0 | 5 GB             | Standard GPT-NeoX, very reliable for fine-tuning         |
+| `Qwen/Qwen3.5-9B`                 | 9B   | 9B       | Apache 2.0 | 6 GB             | Newer generation; fills the gap between 8B and 13B       |
+| `allenai/OLMo-2-1124-13B`         | 13B  | 13B      | Apache 2.0 | 8 GB             | Fully open, strong mid-size model                        |
+| `Qwen/Qwen2.5-14B`                | 14B  | 14B      | Qwen       | 9 GB             | Excellent for 24 GB cards                                |
+| `Qwen/Qwen3-14B`                  | 14B  | 14B      | Apache 2.0 | 9 GB             | Latest Qwen — reasoning, coding, multilingual            |
+| `Qwen/Qwen3.5-27B`                | 27B  | 27B      | Apache 2.0 | 17 GB            | Dense model; step up from 14B, below the 32B tier        |
+| `Qwen/Qwen2.5-32B`                | 32B  | 32B      | Qwen       | 20 GB            | Near GPT-4 quality                                       |
+| `Qwen/Qwen3-32B`                  | 32B  | 32B      | Apache 2.0 | 20 GB            | Top open-source quality, latest Qwen generation          |
+| `Qwen/Qwen2.5-72B`                | 72B  | 72B      | Qwen       | 42 GB            | Top open-source quality — multi-GPU only                 |
+| `Qwen/Qwen3-72B`                  | 72B  | 72B      | Apache 2.0 | 42 GB            | State-of-the-art open model — multi-GPU or cloud only    |
 
 > **ℹ️ Model sizes are calculated from actual tensor counts, not vendor marketing.**
 > The Studio reads the safetensors header of each model and counts every float parameter directly —
@@ -527,6 +547,26 @@ If a model is responding with the wrong identity after re-training or updating i
 ---
 
 ## Changelog
+
+### 2026-08-12 — v1.1.0: iq4_xs + Importance-Matrix Quantization, Real VRAM-Aware Auto Export, Model Catalog Refresh
+
+**Files:** `train/generate_llm.py`, `train/server.py`, `train/studio.html`, `install.bat`, `README.md`
+
+**New GGUF export options:**
+
+1. **`iq4_xs` quant type** — smaller than `q4_k_m` (~3.6 GB vs ~4 GB). Automatically calibrated with an importance matrix generated by `llama-imatrix` (installed alongside `llama-quantize` by `install.bat`) against the model's own training dataset, closing most of the quality gap I-quants normally lose without calibration. A standalone `--imatrix` flag also lets other types (e.g. `q4_k_m`) opt into calibration.
+2. **`--gguf-type auto` now does real VRAM detection** instead of silently mapping to `q4_k_m`. It inspects the exporting machine's GPU (via the same `torch.cuda.get_device_properties()` used elsewhere in the Studio) and picks q8_0 (24+ GB), q4_k_m (12+ GB), or iq4_xs (below that) — meant for testing locally on the same GPU, not for a file you intend to share. The plain default (no flag at all) is unchanged: always `q4_k_m`, since that's the right choice when the hardware it'll run on is unknown.
+3. **Studio UI updated to match** — the export panel's Format dropdown gained an `iq4_xs` option, the size/time estimate and two/three-step warning banners now reflect real detected VRAM instead of a hardcoded `auto → q4_k_m` assumption, and the generate-console phase tracker shows the new importance-matrix step when it runs.
+
+**Fixes:**
+
+1. **`install.bat` pointed at renamed files** — its final success message still referenced `launch_web.bat`/`launch_app.bat`, which were renamed to `start_web.bat`/`start_app.bat` in a previous release. Fixed.
+2. **README overstated GGUF auto-selection** — it previously claimed `generate_llm.py` "auto-selects best GGUF type for your GPU" by default; the code actually always defaulted to `q4_k_m` regardless of VRAM. Docs now describe the real (fixed) default and the new explicit `auto` opt-in separately, instead of conflating the two.
+3. **Base Model Catalog was missing an entry** — `Qwen/Qwen3-72B` was already in the Studio's live catalog (`train/server.py`) but never made it into this README table.
+
+**Model catalog additions** (`train/server.py`): `HuggingFaceTB/SmolLM3-3B`, `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-9B`, and `Qwen/Qwen3.5-27B` — all Apache 2.0, no gating, native `transformers` support (verified before adding — `microsoft/Phi-4-mini-instruct` was considered and rejected because it requires `trust_remote_code=True`, the same fragility that already excludes Phi-3-mini-4k-instruct from this catalog).
+
+---
 
 ### 2026-06-10 — v1.0.1: Expanded Model Catalog, Silent BAT Launch Fix, CUDA Check Fix
 

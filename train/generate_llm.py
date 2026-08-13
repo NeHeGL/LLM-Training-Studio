@@ -11,9 +11,10 @@ Pipeline:
     4. python chat_test/server.py → launch chat UI at http://localhost:5000
 
 Usage:
-    python generate_llm.py                  # recommended: auto-selects best GGUF type for your GPU
+    python generate_llm.py                  # default: portable q4_k_m, runs on any hardware
+    python generate_llm.py --gguf-type auto     # pick best type for the LOCAL GPU's VRAM (see below)
     python generate_llm.py --no-gguf           # skip GGUF (SafeTensors only — Ollama/LM Studio won't load)
-    python generate_llm.py --gguf-type q4_k_m  # override auto-selection with a specific type
+    python generate_llm.py --gguf-type iq4_xs --imatrix  # smaller than q4_k_m, imatrix-calibrated quality
     python generate_llm.py --no-bf16           # force fp16 instead of bfloat16
     python generate_llm.py --lora path/to/lora # custom LoRA path
 
@@ -24,9 +25,15 @@ Default output (in models/<ModelName>/gguf/):
 GGUF types (default: q4_k_m — override with --gguf-type):
     q4_k_m  ~4 GB   DEFAULT. Best balance of quality, size, and compatibility. Runs anywhere.
                      Two-step: SafeTensors → f16 GGUF → q4_k_m. llama-quantize installed by install.bat.
+    iq4_xs  ~3.6 GB Smaller than q4_k_m. Add --imatrix (or it's implied) to calibrate quality against
+                     the model's own training data — closes most of the gap vs q4_k_m at a smaller size.
     q8_0    ~8 GB   Near-lossless quality. Single-step, no extra tools. Only if you need near-lossless.
     f16     ~14 GB  Lossless, full precision. Needs 16+ GB VRAM headroom just to load for inference.
     q4_0    ~4 GB   Fastest inference, lowest quality. Use only if speed is critical.
+    auto            Not a file format — picks q8_0/q4_k_m/iq4_xs based on THIS machine's detected VRAM.
+                     Only sensible if you're exporting to test locally (e.g. chat_test/server.py) on the
+                     same GPU; the plain default (q4_k_m) stays the recommendation when sharing the file
+                     with others on unknown hardware.
 
 The .gguf is ONE self-contained file — weights + tokenizer + config — everything needed.
 """
@@ -733,7 +740,120 @@ def _patch_gguf_metadata(gguf_path, model_name, system_prompt, base_model, ai_ow
         return False
 
 
-def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0"):
+def _find_llama_tool(exe_name):
+    """Locate a llama.cpp CLI tool (llama-quantize, llama-imatrix, ...) by name.
+
+    Checks PATH first, then tools/llama/ (installed by install.bat), then a
+    handful of common manual-build locations.
+    """
+    found = shutil.which(exe_name) or shutil.which(exe_name.replace("-", "_"))
+    if found:
+        return found
+    candidates = [
+        os.path.join(ROOT, "tools", "llama", exe_name + ".exe"),
+        os.path.join(ROOT, "tools", "llama", exe_name),
+        os.path.join(ROOT, "llama.cpp", "build", "bin", "Release", exe_name + ".exe"),
+        os.path.join(ROOT, "llama.cpp", "build", "bin", exe_name + ".exe"),
+        os.path.join(ROOT, "llama.cpp", "build", "bin", "Release", exe_name),
+        os.path.join(ROOT, "llama.cpp", "build", "bin", exe_name),
+        os.path.expanduser(f"~/llama.cpp/build/bin/Release/{exe_name}.exe"),
+        os.path.expanduser(f"~/llama.cpp/build/bin/{exe_name}.exe"),
+        rf"C:\Program Files\llama.cpp\{exe_name}.exe",
+        f"/usr/local/bin/{exe_name}",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _build_calibration_text(out_txt_path):
+    """Write a plain-text calibration corpus for llama-imatrix, sourced from
+    this model's own training dataset (train_chatml.jsonl).
+
+    Using the model's own data means the importance matrix reflects the
+    vocabulary/style it will actually be used for, and needs no extra
+    download. Returns True if a non-trivial corpus was written.
+    """
+    import json as _json
+    dataset_path = os.path.join(_MODEL_DIR, "dataset", "train_chatml.jsonl")
+    if not os.path.isfile(dataset_path):
+        return False
+    wrote_any = False
+    try:
+        with open(dataset_path, encoding="utf-8") as fin, \
+             open(out_txt_path, "w", encoding="utf-8") as fout:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json.loads(line)
+                except Exception:
+                    continue
+                for msg in rec.get("messages", []):
+                    content = (msg.get("content") or "").strip()
+                    if content:
+                        fout.write(content + "\n\n")
+                        wrote_any = True
+    except Exception:
+        return False
+    return wrote_any
+
+
+def _generate_imatrix(f16_gguf_path):
+    """Run llama-imatrix against this model's own training data to produce
+    an importance-matrix file for quality-preserving I-quant quantization.
+
+    Returns the path to the generated imatrix file, or None if llama-imatrix
+    isn't installed or generation failed for any reason (caller should fall
+    back to quantizing without one rather than fail the whole export).
+    """
+    imatrix_exe = _find_llama_tool("llama-imatrix")
+    if not imatrix_exe:
+        print("[export] ℹ llama-imatrix not found — quantizing without an importance matrix.", flush=True)
+        return None
+
+    calib_txt = os.path.join(os.path.dirname(f16_gguf_path), "_tmp_imatrix_calib.txt")
+    if not _build_calibration_text(calib_txt):
+        print("[export] ℹ No training dataset found for calibration — quantizing without an importance matrix.", flush=True)
+        return None
+
+    imatrix_out = os.path.join(os.path.dirname(f16_gguf_path), "_tmp_imatrix.gguf")
+    print("[export] Generating importance matrix from this model's training data...", flush=True)
+    print(f"[export]   {imatrix_exe} -m {f16_gguf_path} -f {calib_txt} -o {imatrix_out}", flush=True)
+    try:
+        import subprocess
+        proc = subprocess.Popen(
+            [imatrix_exe, "-m", f16_gguf_path, "-f", calib_txt, "-o", imatrix_out],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        for line in proc.stdout:
+            sys.stdout.write(f"[imatrix] {line}")
+            sys.stdout.flush()
+        ret = proc.wait()
+    except Exception as e:
+        print(f"[export] ⚠ llama-imatrix error: {e} — quantizing without an importance matrix.", flush=True)
+        return None
+    finally:
+        try:
+            os.remove(calib_txt)
+        except Exception:
+            pass
+
+    if ret == 0 and os.path.isfile(imatrix_out):
+        print("[export] ✅ Importance matrix generated.", flush=True)
+        return imatrix_out
+    print(f"[export] ⚠ llama-imatrix failed (exit {ret}) — quantizing without an importance matrix.", flush=True)
+    return None
+
+
+def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0", use_imatrix=False):
     """
     Convert a HuggingFace SafeTensors model directory to a single GGUF file
     using llama.cpp's convert_hf_to_gguf.py script (downloaded on demand).
@@ -797,12 +917,17 @@ def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0"):
         # These require llama-quantize post-processing:
         "q4_k_m": "f16",
         "q4_0":   "f16",
+        "iq4_xs": "f16",
     }
     # llama-quantize type strings
     _QUANTIZE_TYPE = {
         "q4_k_m": "Q4_K_M",
         "q4_0":   "Q4_0",
+        "iq4_xs": "IQ4_XS",
     }
+    # I-quants (unlike K-quants) lose noticeably more quality without an
+    # importance matrix, so we generate one by default for these types.
+    _IMATRIX_RECOMMENDED = {"iq4_xs"}
     needs_quantize = quantization not in _SUPPORTED_DIRECT
     outtype = _DIRECT_OUTTYPE.get(quantization, "f16")
 
@@ -886,33 +1011,26 @@ def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0"):
         # ── Step 2: Quantize with llama-quantize if needed ────────────────────
         if needs_quantize:
             quant_type = _QUANTIZE_TYPE.get(quantization, quantization.upper())
-            # Look for llama-quantize in PATH and common install locations
-            quantize_exe = shutil.which("llama-quantize") or shutil.which("llama_quantize")
-            if not quantize_exe:
-                llama_candidates = [
-                    # Installed by install.bat into tools/llama/ — checked first
-                    os.path.join(ROOT, "tools", "llama", "llama-quantize.exe"),
-                    os.path.join(ROOT, "tools", "llama", "llama-quantize"),
-                    os.path.join(ROOT, "llama.cpp", "build", "bin", "Release", "llama-quantize.exe"),
-                    os.path.join(ROOT, "llama.cpp", "build", "bin", "llama-quantize.exe"),
-                    os.path.join(ROOT, "llama.cpp", "build", "bin", "Release", "llama-quantize"),
-                    os.path.join(ROOT, "llama.cpp", "build", "bin", "llama-quantize"),
-                    os.path.expanduser("~/llama.cpp/build/bin/Release/llama-quantize.exe"),
-                    os.path.expanduser("~/llama.cpp/build/bin/llama-quantize.exe"),
-                    r"C:\Program Files\llama.cpp\llama-quantize.exe",
-                    "/usr/local/bin/llama-quantize",
-                ]
-                for c in llama_candidates:
-                    if os.path.isfile(c):
-                        quantize_exe = c
-                        break
+            quantize_exe = _find_llama_tool("llama-quantize")
+
+            # Generate an importance matrix first if requested/recommended —
+            # must happen before we build the quantize command line so we can
+            # append --imatrix to it.
+            imatrix_path = None
+            if quantize_exe and (use_imatrix or quantization in _IMATRIX_RECOMMENDED):
+                imatrix_path = _generate_imatrix(convert_output)
 
             if quantize_exe:
-                print(f"[export] Step 2: Quantizing f16 GGUF → {quantization} using llama-quantize...", flush=True)
-                print(f"[export]   {quantize_exe} {convert_output} {output_path} {quant_type}", flush=True)
+                quantize_cmd = [quantize_exe]
+                if imatrix_path:
+                    quantize_cmd += ["--imatrix", imatrix_path]
+                quantize_cmd += [convert_output, output_path, quant_type]
+                print(f"[export] Step 2: Quantizing f16 GGUF → {quantization} using llama-quantize"
+                      f"{' (with importance matrix)' if imatrix_path else ''}...", flush=True)
+                print(f"[export]   {' '.join(quantize_cmd)}", flush=True)
                 try:
                     q_proc = subprocess.Popen(
-                        [quantize_exe, convert_output, output_path, quant_type],
+                        quantize_cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         encoding="utf-8",
@@ -924,11 +1042,16 @@ def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0"):
                         sys.stdout.flush()
                     q_ret = q_proc.wait()
                     if q_ret == 0 and os.path.isfile(output_path):
-                        # Remove the intermediate f16 temp file
+                        # Remove the intermediate f16 temp file (and imatrix, if any)
                         try:
                             os.remove(convert_output)
                         except Exception:
                             pass
+                        if imatrix_path:
+                            try:
+                                os.remove(imatrix_path)
+                            except Exception:
+                                pass
                         size_gb = os.path.getsize(output_path) / 1e9
                         print(f"[export] ✅ GGUF quantization complete ({size_gb:.1f} GB): {output_path}", flush=True)
                         return output_path
@@ -1236,30 +1359,51 @@ def main():
                         "Only needed if you want to use chat_test/server.py (the Python chat tester). "
                         "By default they are deleted after GGUF conversion to save ~15 GB.")
     p.add_argument("--gguf-type",        dest="gguf_type", default=None,
-                   choices=["f16", "q8_0", "q4_k_m", "q4_0"],
-                   help="GGUF quantization type. Auto-selected based on your GPU VRAM if not specified. "
+                   choices=["f16", "q8_0", "q4_k_m", "q4_0", "iq4_xs", "auto"],
+                   help="GGUF quantization type (default: q4_k_m — a fixed, portable choice for sharing "
+                        "with others on unknown hardware). "
                         "f16=lossless ~14 GB (16+ GB VRAM); q8_0=near-lossless ~8 GB (8-16 GB VRAM); "
-                        "q4_k_m=good quality ~4 GB (4-8 GB VRAM); q4_0=smallest ~4 GB (CPU/low VRAM)")
-    p.set_defaults(use_bf16=True, do_gguf=True, keep_safetensors=False)
+                        "q4_k_m=good quality ~4 GB (4-8 GB VRAM); q4_0=smallest ~4 GB (CPU/low VRAM); "
+                        "iq4_xs=smaller than q4_k_m, imatrix-calibrated (implies --imatrix); "
+                        "auto=pick the best type for the DETECTED LOCAL GPU's VRAM (use when testing "
+                        "on this same machine, not when exporting to share)")
+    p.add_argument("--imatrix",          dest="imatrix", action="store_true",
+                   help="Generate an importance matrix from this model's own training data and use it "
+                        "during quantization (improves quality at the same bit-width). Implied by "
+                        "--gguf-type iq4_xs; optional for other types. Requires llama-imatrix (installed "
+                        "by install.bat alongside llama-quantize).")
+    p.set_defaults(use_bf16=True, do_gguf=True, keep_safetensors=False, imatrix=False)
     args = p.parse_args()
 
-    # ── Auto-select GGUF type ─────────────────────────────────────────────────
-    # q4_k_m is always the best default:
+    # ── Resolve GGUF type ──────────────────────────────────────────────────────
+    # Plain default (no --gguf-type at all) is always q4_k_m:
     #   - ~4 GB — runs on any hardware (4 GB VRAM, 8 GB RAM for CPU)
     #   - Barely perceptible quality loss vs f16/q8_0
     #   - What Ollama and llama.cpp recommend by default
-    #   - f16 (~14 GB) needs 16+ GB VRAM headroom just to *load* for inference
-    #     and leaves almost nothing for context — a poor experience even on high-end GPUs
-    #   - q8_0 (~8 GB) is only useful if you specifically need near-lossless precision
-    # Override with --gguf-type if you have a specific reason (e.g. q8_0 for eval work).
-    # llama-quantize is installed automatically by install.bat into tools/llama/.
-    if (args.gguf_type is None or args.gguf_type == "auto") and args.do_gguf:
+    #   - The right choice when the .gguf will be shared/loaded on hardware you don't control
+    # "auto" is a distinct, explicit opt-in: it inspects THIS machine's VRAM (via _gpu_info())
+    # and picks the type best suited to testing locally on this same GPU — not a good choice
+    # for a file you intend to share, since a bigger GPU here doesn't help anyone else.
+    if args.gguf_type == "auto" and args.do_gguf:
+        gi = _gpu_info()
+        if gi["vram_gb"] >= 24:
+            args.gguf_type = "q8_0"
+            why = f"{gi['vram_gb']:.0f} GB VRAM detected ({gi['name']}) — plenty of headroom for near-lossless quality"
+        elif gi["vram_gb"] >= 12:
+            args.gguf_type = "q4_k_m"
+            why = f"{gi['vram_gb']:.0f} GB VRAM detected ({gi['name']}) — balanced quality/size"
+        else:
+            args.gguf_type = "iq4_xs"  # _IMATRIX_RECOMMENDED already implies imatrix generation for this type
+            why = (f"{gi['vram_gb']:.0f} GB VRAM detected ({gi['name']})" if gi["has_cuda"]
+                   else "no CUDA GPU detected") + " — smallest good-quality option"
+        print(f"[export] GGUF type auto-selected : {args.gguf_type} ({why})")
+    elif (args.gguf_type is None) and args.do_gguf:
         args.gguf_type = "q4_k_m"
-        print(f"[export] GGUF type auto-selected : q4_k_m (~4 GB, best quality/size balance)")
+        print(f"[export] GGUF type (default)     : q4_k_m (~4 GB, best quality/size balance — portable)")
         print(f"[export]   Two-step conversion: SafeTensors → f16 GGUF → q4_k_m GGUF")
         print(f"[export]   (llama-quantize installed by install.bat — no extra setup needed)")
     elif args.gguf_type is not None:
-        if args.gguf_type in ("q4_k_m", "q4_0"):
+        if args.gguf_type in ("q4_k_m", "q4_0", "iq4_xs"):
             print(f"[export] GGUF type (manual)      : {args.gguf_type}")
             print(f"[export]   Two-step conversion: SafeTensors → f16 GGUF → {args.gguf_type} GGUF")
         else:
@@ -1751,7 +1895,7 @@ def main():
         print(f"[export] Converting model to GGUF format ({args.gguf_type}) for Ollama / LM Studio...", flush=True)
         print(f"[export] Note: RAM will spike again as the converter reads the SafeTensors back", flush=True)
         print(f"[export]       into memory — this is normal and expected during GGUF conversion.", flush=True)
-        gguf_path = _convert_to_gguf(export_dir, gguf_out, quantization=args.gguf_type)
+        gguf_path = _convert_to_gguf(export_dir, gguf_out, quantization=args.gguf_type, use_imatrix=args.imatrix)
 
         if gguf_path:
             gguf_size_gb = os.path.getsize(gguf_path) / 1e9
