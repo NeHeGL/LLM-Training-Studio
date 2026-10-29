@@ -217,6 +217,52 @@ def _free_port():
         return sk.getsockname()[1]
 
 
+_job_handle = None   # keeps the Windows job object (and with it the child) tied to this process
+
+
+def _kill_child_with_parent(proc):
+    """Windows: make llama-server die when this server does, however this server ends.
+
+    Killing or crashing the chat server does not stop its child process on Windows, which would
+    leave a model loaded in memory. A job object with KILL_ON_JOB_CLOSE ties the two together.
+    """
+    global _job_handle
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class EXTENDED(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC), ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32 = ctypes.windll.kernel32
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        job = k32.CreateJobObjectW(None, None)
+        info = EXTENDED()
+        info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info))
+        k32.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(int(proc._handle)))
+        _job_handle = job
+    except Exception as e:
+        print(f"[server] (could not tie llama-server to this process: {e})")
+
+
 def _stop_llama_server():
     global _llama_proc
     if _llama_proc and _llama_proc.poll() is None:
@@ -247,6 +293,7 @@ def load_model_gguf_bg(gguf_path):
         log_path = os.path.join(TEST_DIR, "llama-server.log")
         _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
         atexit.register(_stop_llama_server)
+        _kill_child_with_parent(_llama_proc)
         for _ in range(600):
             if _llama_proc.poll() is not None:
                 tail = ""
