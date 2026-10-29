@@ -573,6 +573,19 @@ pip install -r requirements.txt
 
 ---
 
+## Changelog
+
+Full history: **[CHANGELOG.md](CHANGELOG.md)**
+
+**Latest: 2026-10-29 — v1.2.0**
+- Training now learns your facts: answer-only loss, and an automatic schedule that gives small datasets enough steps (the old defaults reproduced none of the trained answers on a 45-pair set).
+- Every model uses its own chat template end to end, so the exported GGUF and the Ollama model are prompted exactly as they were trained.
+- A verified, ungated model catalog (checked against Hugging Face), plus optional custom models and a Hugging Face token.
+- Checks before training and export: free GPU memory, RAM and disk, with clear messages. A refused "Reset + Train" no longer deletes your adapter.
+- New installer logic for current GPUs and drivers, optional GPU-accelerated llama.cpp, q5_k_m / q6_k export, and four new guides in `docs/`.
+
+---
+
 ## About this project
 
 > **About this project**
