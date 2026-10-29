@@ -1,6 +1,6 @@
 # Changelog
 
-### 2026-10-29 - Modern training pipeline, verified catalog, more export options
+### 2026-10-29 — v1.2.0: Modern Training Pipeline, Verified Ungated Catalog, Pre-flight Checks, GPU-Accelerated llama.cpp
 
 - **Answer-only loss**: the model is trained on its replies, not the system prompt/question.
 - **Native chat templates** end to end: training, the exported GGUF and the Ollama Modelfile all use the base model's own template (ChatML, Phi, Gemma 4 mapped for Ollama). Qwen3-style thinking is disabled consistently.
