@@ -755,12 +755,18 @@ def _patch_gguf_metadata(gguf_path, model_name, system_prompt, base_model, ai_ow
         return False
 
 
-def _find_llama_tool(exe_name):
+def _find_llama_tool(exe_name, prefer_cuda=False):
     """Locate a llama.cpp CLI tool (llama-quantize, llama-imatrix, ...) by name.
 
-    Checks PATH first, then tools/llama/ (installed by install.bat), then a
-    handful of common manual-build locations.
+    With prefer_cuda=True the GPU-accelerated build in tools/llama-cuda/ (installed by install.bat
+    when the machine can run it) is returned first, if present. Otherwise checks PATH, then
+    tools/llama/ (CPU build, installed by install.bat), then a handful of manual-build locations.
     """
+    if prefer_cuda:
+        for ext in (".exe", ""):
+            cand = os.path.join(ROOT, "tools", "llama-cuda", exe_name + ext)
+            if os.path.isfile(cand):
+                return cand
     found = shutil.which(exe_name) or shutil.which(exe_name.replace("-", "_"))
     if found:
         return found
@@ -818,14 +824,17 @@ def _build_calibration_text(out_txt_path):
 
 def _generate_imatrix(f16_gguf_path):
     """Run llama-imatrix against this model's own training data to produce
-    an importance-matrix file for quality-preserving I-quant quantization.
+    an importance-matrix file for quality-preserving quantization.
 
-    Returns the path to the generated imatrix file, or None if llama-imatrix
-    isn't installed or generation failed for any reason (caller should fall
-    back to quantizing without one rather than fail the whole export).
+    Uses the GPU-accelerated build (tools/llama-cuda) when it is installed and falls back to the CPU
+    build if that fails. Returns the path to the generated imatrix file, or None if llama-imatrix
+    isn't installed or generation failed for any reason (caller should fall back to quantizing
+    without one rather than fail the whole export).
     """
-    imatrix_exe = _find_llama_tool("llama-imatrix")
-    if not imatrix_exe:
+    import subprocess
+    exes = [e for e in dict.fromkeys([_find_llama_tool("llama-imatrix", prefer_cuda=True),
+                                      _find_llama_tool("llama-imatrix")]) if e]
+    if not exes:
         print("[export] ℹ llama-imatrix not found — quantizing without an importance matrix.", flush=True)
         return None
 
@@ -836,35 +845,39 @@ def _generate_imatrix(f16_gguf_path):
 
     imatrix_out = os.path.join(os.path.dirname(f16_gguf_path), "_tmp_imatrix.gguf")
     print("[export] Generating importance matrix from this model's training data...", flush=True)
-    print(f"[export]   {imatrix_exe} -m {f16_gguf_path} -f {calib_txt} -o {imatrix_out}", flush=True)
     try:
-        import subprocess
-        proc = subprocess.Popen(
-            [imatrix_exe, "-m", f16_gguf_path, "-f", calib_txt, "-o", imatrix_out],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        for line in proc.stdout:
-            sys.stdout.write(f"[imatrix] {line}")
-            sys.stdout.flush()
-        ret = proc.wait()
-    except Exception as e:
-        print(f"[export] ⚠ llama-imatrix error: {e} — quantizing without an importance matrix.", flush=True)
-        return None
+        for i, exe in enumerate(exes):
+            on_gpu = os.path.basename(os.path.dirname(exe)) == "llama-cuda"
+            cmd = [exe, "-m", f16_gguf_path, "-f", calib_txt, "-o", imatrix_out] + (["-ngl", "99"] if on_gpu else [])
+            print(f"[export]   {' '.join(cmd)}", flush=True)
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
+                for line in proc.stdout:
+                    sys.stdout.write(f"[imatrix] {line}")
+                    sys.stdout.flush()
+                ret = proc.wait()
+            except Exception as e:
+                print(f"[export] ⚠ llama-imatrix error: {e}", flush=True)
+                ret = -1
+            if ret == 0 and os.path.isfile(imatrix_out):
+                print(f"[export] ✅ Importance matrix generated ({'GPU' if on_gpu else 'CPU'}).", flush=True)
+                return imatrix_out
+            more = i + 1 < len(exes)
+            print(f"[export] ⚠ llama-imatrix failed (exit {ret})"
+                  + (" — retrying with the CPU build." if more else " — quantizing without an importance matrix."), flush=True)
     finally:
         try:
             os.remove(calib_txt)
         except Exception:
             pass
-
-    if ret == 0 and os.path.isfile(imatrix_out):
-        print("[export] ✅ Importance matrix generated.", flush=True)
-        return imatrix_out
-    print(f"[export] ⚠ llama-imatrix failed (exit {ret}) — quantizing without an importance matrix.", flush=True)
     return None
 
 

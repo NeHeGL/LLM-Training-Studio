@@ -14,6 +14,12 @@ The installed PyTorch build doesn't match your card. Delete the `.venv` folder a
 `install.bat` again; it picks the right build from your card and driver. GTX 10-series
 (Pascal) and Titan V (Volta) cards use an older PyTorch on purpose, because newer builds dropped them.
 
+**The installer downloads a lot at the end**
+On an NVIDIA card the last step adds a GPU-accelerated llama.cpp build (about 600 MB, one time). It makes
+the chat tester about 3x faster. To skip it, run `set LLM_SKIP_CUDA_LLAMA=1` in the same command window
+before `install.bat`; the small CPU build is used instead and everything still works. If the GPU build
+can't see your card it is removed automatically.
+
 **Install fails halfway / something won't download**
 Check your internet connection and run `install.bat` again; it picks up where it left off.
 

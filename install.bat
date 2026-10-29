@@ -107,32 +107,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: -- Download llama-quantize (needed for q4_k_m GGUF export) --
+:: -- llama.cpp tools: quantize (GGUF export), imatrix, llama-server (chat tester) --
+:: tools\install_llama_quantize.ps1 installs the small CPU build always, and adds the
+:: GPU-accelerated CUDA build (~600 MB, one time) when an NVIDIA GPU and driver support it.
+:: It skips whatever is already installed, so it is safe to run on every install.
+:: To skip the large CUDA download:  set LLM_SKIP_CUDA_LLAMA=1  before running this file.
 echo.
-echo  [5/5] Installing llama-quantize (needed for q4_k_m GGUF export)...
+echo  [5/5] Installing llama.cpp tools (GGUF export, quality calibration, chat tester)...
 echo.
 
 set LLAMA_DIR=%~dp0tools\llama
-set LLAMA_EXE=%LLAMA_DIR%\llama-quantize.exe
-
-if exist "!LLAMA_EXE!" (
-    echo  [OK] llama-quantize already installed at !LLAMA_EXE!
-    goto :llama_done
-)
-
 if not exist "!LLAMA_DIR!" mkdir "!LLAMA_DIR!"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\install_llama_quantize.ps1"
 if errorlevel 1 (
     echo.
-    echo  [WARN] Could not auto-install llama-quantize.
-    echo         q4_k_m export will fall back to f16 GGUF until it is installed.
-    echo         To install manually, download llama.cpp from:
-    echo         https://github.com/ggerganov/llama.cpp/releases
-    echo         and place llama-quantize.exe in: !LLAMA_DIR!\
+    echo  [WARN] Could not auto-install the llama.cpp tools.
+    echo         q4_k_m export will fall back to f16 GGUF until they are installed.
+    echo         To install manually, download the Windows CPU build from:
+    echo         https://github.com/ggml-org/llama.cpp/releases
+    echo         and extract it into: !LLAMA_DIR!\
     echo.
 ) else (
-    echo  [OK] llama-quantize installed - q4_k_m GGUF export is ready
+    echo  [OK] llama.cpp tools are ready
 )
 
 :llama_done

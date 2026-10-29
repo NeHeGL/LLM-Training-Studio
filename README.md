@@ -50,7 +50,7 @@ Run `install.bat` once. It will:
 
 1. Detect your CUDA version via `nvidia-smi` and install the matching PyTorch build
 2. Install all Python dependencies from `requirements.txt`
-3. Download `llama-quantize.exe` into `tools/llama/` (required for q4\_k\_m GGUF export)
+3. Download llama.cpp's tools into `tools/llama/` (required for GGUF export), plus a GPU-accelerated build (about 600 MB, one time) into `tools/llama-cuda/` when your card and driver support it. It makes the chat tester about 3x faster and speeds up the *Better quality* export option. Skip it with `set LLM_SKIP_CUDA_LLAMA=1` before running `install.bat`; everything still works without it
 
 > **GPU required:** An NVIDIA GPU with CUDA support is required for practical training.  
 > CPU-only mode is technically possible but training is 50–100× slower and not recommended.  
@@ -510,7 +510,7 @@ Opens the chat UI at **http://localhost:5000**. No flags needed — auto-detects
 |-------------------------------------|----------------------------------------------------------------------------------|
 | `start_web.bat`                     | Launch the Training Studio web server (port 5001)                                |
 | `start_app.bat`                     | Launch the PyQt6 desktop app (no console window)                                 |
-| `install.bat`                       | Install Python dependencies + PyTorch + llama-quantize                           |
+| `install.bat`                       | Install Python dependencies + PyTorch + the llama.cpp tools                      |
 | `train/server.py`                   | Training Studio server (Flask)                                                   |
 | `train/studio.html`                 | Training Studio UI                                                               |
 | `train/studio.css`                  | Training Studio stylesheet                                                       |
@@ -528,11 +528,11 @@ Opens the chat UI at **http://localhost:5000**. No flags needed — auto-detects
 | `models/<ModelName>/gguf/`          | Exported GGUF model + Modelfile — load in Ollama or LM Studio                    |
 | `config.json`                       | Root index — active model name + list of all model names                         |
 | `requirements.txt`                  | Python dependencies                                                              |
-| `tools/install_llama_quantize.ps1`  | Download llama-quantize.exe from llama.cpp releases (called by `install.bat`)    |
+| `tools/install_llama_quantize.ps1`  | Download the llama.cpp CPU build and, if supported, the CUDA build (called by `install.bat`) |
 | `tools/convert_hf_to_gguf.py`       | Downloaded on demand — converts SafeTensors → GGUF                               |
 | `tools/verify_catalog.py`           | Checks every catalog model against the Hugging Face API (exists, ungated, license) |
 | `docs/`                             | Guides: training data, model & settings, using your model, troubleshooting       |
-| `tools/llama/`                      | llama-quantize.exe and required DLLs (installed by `install.bat`)                |
+| `tools/llama/`, `tools/llama-cuda/` | llama.cpp tools: CPU build, and the optional GPU build (installed by `install.bat`) |
 
 ---
 

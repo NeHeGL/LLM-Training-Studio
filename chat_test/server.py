@@ -200,14 +200,24 @@ _llama_proc = None
 _llama_port = None
 
 
-def _find_llama_server():
+def _llama_server_candidates():
+    """[(exe, is_cuda), ...] best first: the GPU build in tools/llama-cuda, then the CPU build."""
     import shutil
     exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    out = []
+    cuda = os.path.join(ROOT, "tools", "llama-cuda", exe)
+    if os.path.isfile(cuda):
+        out.append((cuda, True))
     for d in (os.path.join(ROOT, "tools", "llama"), os.path.join(ROOT, "llama.cpp"), os.path.expanduser("~/llama.cpp")):
         cand = os.path.join(d, exe)
         if os.path.isfile(cand):
-            return cand
-    return shutil.which("llama-server")
+            out.append((cand, False))
+            break
+    else:
+        found = shutil.which("llama-server")
+        if found:
+            out.append((found, False))
+    return out
 
 
 def _free_port():
@@ -273,52 +283,63 @@ def _stop_llama_server():
 
 
 def load_model_gguf_bg(gguf_path):
-    """Start llama-server on the exported GGUF. No Ollama and no Python wheel required."""
+    """Start llama-server on the exported GGUF. No Ollama and no Python wheel required.
+
+    Tries the GPU-accelerated build first and falls back to the CPU build if it cannot start."""
     global _model, _tokenizer, _ready, _status_msg, _llama_proc, _llama_port
     import atexit, subprocess, urllib.request
     try:
-        exe = _find_llama_server()
-        if not exe:
+        candidates = _llama_server_candidates()
+        if not candidates:
             _status_msg = ("Error: llama-server was not found. Run install.bat again (its last step downloads "
                            "llama.cpp into tools/llama), or open the .gguf in Ollama or LM Studio instead.")
             print("[server] ERROR: llama-server not found in tools/llama")
             return
         gi = _gpu_info()
-        _llama_port = _free_port()
-        cmd = [exe, "-m", gguf_path, "--host", "127.0.0.1", "--port", str(_llama_port),
-               "-c", "4096", "--jinja", "-ngl", "99" if gi["has_cuda"] else "0"]
-        _status_msg = "Starting llama-server and loading the model..."
-        print(f"[server] Loading GGUF: {gguf_path}")
-        print(f"[server] {' '.join(cmd)}")
         log_path = os.path.join(TEST_DIR, "llama-server.log")
-        _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
-        atexit.register(_stop_llama_server)
-        _kill_child_with_parent(_llama_proc)
-        for _ in range(600):
-            if _llama_proc.poll() is not None:
-                tail = ""
+        last_error = ""
+        for exe, is_cuda in candidates:
+            _llama_port = _free_port()
+            cmd = [exe, "-m", gguf_path, "--host", "127.0.0.1", "--port", str(_llama_port),
+                   "-c", "4096", "--jinja", "-ngl", "99" if (is_cuda and gi["has_cuda"]) else "0"]
+            device = "GPU (CUDA)" if is_cuda else "CPU"
+            _status_msg = f"Starting llama-server on the {device} and loading the model..."
+            print(f"[server] Loading GGUF: {gguf_path}")
+            print(f"[server] {' '.join(cmd)}")
+            try:
+                _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
+            except OSError as e:          # the executable itself cannot run (corrupt, blocked by antivirus, ...)
+                last_error = str(e)
+                print(f"[server] could not launch llama-server ({device}): {e}" + ("; trying the CPU build" if is_cuda else ""))
+                continue
+            atexit.register(_stop_llama_server)
+            _kill_child_with_parent(_llama_proc)
+            ready = False
+            for _ in range(600):
+                if _llama_proc.poll() is not None:
+                    break
                 try:
-                    tail = open(log_path, errors="replace").read()[-300:]
-                except OSError:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{_llama_port}/health", timeout=2) as r:
+                        if r.status == 200:
+                            ready = True
+                            break
+                except Exception:
                     pass
-                _status_msg = f"Error loading GGUF model: llama-server exited ({_llama_proc.returncode}). {tail}"
-                print(f"[server] ERROR: llama-server exited with {_llama_proc.returncode}")
+                time.sleep(1)
+            if ready:
+                _model = "llama-server"
+                _tokenizer = None
+                _ready = True
+                _status_msg = f"Model ready (GGUF, {device})"
+                print(f"[server] GGUF model ready on the {device}!")
                 return
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{_llama_port}/health", timeout=2) as r:
-                    if r.status == 200:
-                        break
-            except Exception:
-                pass
-            time.sleep(1)
-        else:
-            _status_msg = "Error loading GGUF model: llama-server did not become ready in time."
-            return
-        _model = "llama-server"
-        _tokenizer = None
-        _ready = True
-        _status_msg = "Model ready (GGUF)"
-        print("[server] GGUF model ready!")
+                last_error = open(log_path, errors="replace").read()[-300:]
+            except OSError:
+                last_error = ""
+            _stop_llama_server()
+            print(f"[server] llama-server ({device}) did not start" + ("; trying the CPU build" if is_cuda else ""))
+        _status_msg = f"Error loading GGUF model: llama-server could not start. {last_error}"
 
     except Exception as e:
         _status_msg = f"Error loading GGUF model: {e}"

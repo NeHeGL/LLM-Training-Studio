@@ -51,6 +51,7 @@ training_data/
 # llama.cpp binaries — downloaded automatically by tools/install_llama_quantize.ps1
 # Do not commit these; users run the install script to get them.
 tools/llama/
+tools/llama-cuda/
 
 # Personal scripts — not part of the public project
 tools/backup.ps1
