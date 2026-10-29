@@ -8,14 +8,22 @@ if (-not (Test-Path $LlamaDir)) {
 }
 
 try {
-    Write-Host "  Fetching latest llama.cpp release from GitHub..."
-    $rel = Invoke-RestMethod 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest'
+    Write-Host "  Looking for the latest llama.cpp Windows build on GitHub..."
+    # NOTE: /releases/latest no longer reliably points at a binary release (llama.cpp tags builds
+    # bNNNN and marks them pre-release), so scan the most recent releases instead.
+    $rels = Invoke-RestMethod 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15'
 
-    $asset = $rel.assets | Where-Object { $_.name -match 'llama-.*-bin-win-avx2-x64\.zip' } | Select-Object -First 1
-    if (-not $asset) {
-        $asset = $rel.assets | Where-Object { $_.name -match 'llama-.*-bin-win-.*x64\.zip' } | Select-Object -First 1
+    # The CPU build contains llama-quantize and llama-imatrix, which is all we need.
+    $patterns = @('^llama-.*-bin-win-cpu-x64\.zip$', '^llama-.*-bin-win-avx2-x64\.zip$', '^llama-.*-bin-win-.*x64\.zip$')
+    $asset = $null
+    foreach ($pat in $patterns) {
+        foreach ($rel in $rels) {
+            $asset = $rel.assets | Where-Object { $_.name -match $pat -and $_.name -notmatch 'arm64|rocm|sycl|openvino|opencl|cudart' } | Select-Object -First 1
+            if ($asset) { break }
+        }
+        if ($asset) { break }
     }
-    if (-not $asset) { throw "No Windows x64 zip found in latest release" }
+    if (-not $asset) { throw "No Windows x64 build found in the recent llama.cpp releases" }
 
     $zip = Join-Path $LlamaDir "llama_release.zip"
     Write-Host "  Downloading $($asset.name) ..."

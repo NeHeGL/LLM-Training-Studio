@@ -10,7 +10,8 @@
 - **VRAM-aware batch size** scales from 8 GB cards to 96 GB.
 - **New export types**: `q5_k_m`, `q6_k`, and an imatrix "better quality" option for 4/5/6-bit files.
 - **Export fixes for transformers 5**: restored `tokenizer_class` and `config.json`, patched converter config loading, and native-architecture loading instead of repository code.
-- **Docs**: new guide, [Writing good training data](docs/writing-good-training-data.md).
+- **Docs**: four new guides in `docs/` (training data, choosing a model and settings, using your model, troubleshooting).
+- **Installer**: picks the PyTorch build from your card and driver (RTX 20xx-50xx get CUDA 13.0 or 12.8; GTX 10xx/Titan V get PyTorch 2.14 with CUDA 12.6), reads the newer `nvidia-smi` output, and runs a real GPU check after installing. Dependency versions updated and capped.
 
 ### 2026-08-12 — v1.1.0: iq4_xs + Importance-Matrix Quantization, Real VRAM-Aware Auto Export, Model Catalog Refresh
 

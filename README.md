@@ -22,7 +22,9 @@ Write down questions and answers about anything: your game world, your products,
   </a>
 </p>
 
-**[Quick start](#quick-start)** | **[Writing good training data](docs/writing-good-training-data.md)** | **[Model catalog](#base-model-catalog)** | **[Changelog](CHANGELOG.md)**
+**[Quick start](#quick-start)** | **[Model catalog](#base-model-catalog)** | **[Changelog](CHANGELOG.md)**
+
+**Guides:** [Writing good training data](docs/writing-good-training-data.md) | [Choosing a model and settings](docs/choosing-a-model-and-settings.md) | [Using your model in Ollama & LM Studio](docs/using-your-model.md) | [Troubleshooting](docs/troubleshooting.md)
 
 > **No Hugging Face account needed.** Every model in the catalog is openly licensed (Apache 2.0, MIT or Qwen license) and downloads on its own. Want a gated model like Llama? You can add one yourself - see [the catalog notes](#base-model-catalog).
 
@@ -529,7 +531,7 @@ Opens the chat UI at **http://localhost:5000**. No flags needed — auto-detects
 | `tools/install_llama_quantize.ps1`  | Download llama-quantize.exe from llama.cpp releases (called by `install.bat`)    |
 | `tools/convert_hf_to_gguf.py`       | Downloaded on demand — converts SafeTensors → GGUF                               |
 | `tools/verify_catalog.py`           | Checks every catalog model against the Hugging Face API (exists, ungated, license) |
-| `docs/`                             | Guides, starting with *Writing good training data*                               |
+| `docs/`                             | Guides: training data, model & settings, using your model, troubleshooting       |
 | `tools/llama/`                      | llama-quantize.exe and required DLLs (installed by `install.bat`)                |
 
 ---

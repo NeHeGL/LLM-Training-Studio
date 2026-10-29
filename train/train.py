@@ -980,6 +980,19 @@ def main():
             vram_gb = props.total_memory / (1024 ** 3)
         except Exception:
             vram_gb = 0
+        # Testing/support aid: LLM_STUDIO_VRAM_GB=8 makes this run behave like an 8 GB card -
+        # the auto-settings see 8 GB AND the GPU allocator is capped, so memory limits are real.
+        _sim = os.environ.get("LLM_STUDIO_VRAM_GB")
+        if _sim and vram_gb > 0:
+            try:
+                _sim_gb = float(_sim)
+                if 0 < _sim_gb < vram_gb:
+                    torch.cuda.set_per_process_memory_fraction(_sim_gb / vram_gb, 0)
+                    print(f"[train] LLM_STUDIO_VRAM_GB={_sim_gb:g}: simulating a {_sim_gb:g} GB card "
+                          f"(real card has {vram_gb:.0f} GB)")
+                    vram_gb = _sim_gb
+            except ValueError:
+                print(f"[train] Ignoring invalid LLM_STUDIO_VRAM_GB={_sim!r}")
 
     model_params_b = _estimate_params_b(BASE_MODEL)
 
