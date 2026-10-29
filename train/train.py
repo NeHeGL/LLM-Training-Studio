@@ -571,8 +571,10 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train fine-tuned LLM model")
     p.add_argument("--fmt",         default="chatml", choices=["chatml", "alpaca"],
                    help="Dataset format (default: chatml)")
-    p.add_argument("--epochs",      type=int,   default=3,
-                   help="Number of training epochs (default: 3)")
+    p.add_argument("--epochs",      type=int,   default=None,
+                   help="Number of training epochs. Default: automatic - chosen from the dataset "
+                        "size so the model gets enough optimizer steps to learn your facts "
+                        "(small datasets get more epochs and a smaller effective batch).")
     p.add_argument("--batch",       type=int,   default=2,
                    help="Per-device batch size (default: 2)")
     p.add_argument("--grad_accum",  type=int,   default=4,
@@ -1117,7 +1119,7 @@ def main():
     print(f"[train] CUDA available : {cuda}")
     print(f"[train] BF16 supported : {bf16}  {'(disabled for 4-bit on Blackwell)' if bf16 and is_blackwell and use_4bit else ''}")
     print(f"[train] 4-bit loading  : {use_4bit}")
-    print(f"[train] Epochs         : {args.epochs}")
+    print(f"[train] Epochs         : {args.epochs if args.epochs is not None else 'auto (chosen once the dataset is loaded)'}")
     print(f"[train] Batch size     : {args.batch}")
     print(f"[train] Grad accum     : {args.grad_accum}  (effective batch = {args.batch * args.grad_accum})")
     print(f"[train] Grad ckpt      : {use_grad_ckpt}  {grad_ckpt_reason}")
@@ -1201,6 +1203,9 @@ def main():
                 "{{'<|im_start|>assistant\n'}}"
                 "{% endif %}"
             )
+
+    from chat_format import prepare_tokenizer
+    prepare_tokenizer(tokenizer)   # known per-family template fixes (e.g. Gemma 4 E2B/E4B thinking)
 
     # ── 3. Model ──────────────────────────────────────────────────────────────
     print("[train] Loading base model (may take a few minutes on first run)...")
@@ -1431,6 +1436,24 @@ def main():
             print(f"[train] Train examples : {len(train_dataset)}  (dataset too small for eval split — need 20+)")
         else:
             print(f"[train] Train examples : {len(train_dataset)}  (training on 100% of data)")
+
+    # ── Automatic schedule (when --epochs is not given) ───────────────────────
+    # Teaching facts needs enough optimizer STEPS, not just epochs. Measured on a 45-pair set
+    # (Qwen3 1.7B): 18 steps (the old 3 epochs / batch 8) reproduced 0% of the trained answers,
+    # 135 steps 4%, 270 steps 62% (33% verbatim). Small datasets therefore get a smaller
+    # effective batch and more epochs; big datasets keep a large batch and 3 epochs.
+    if args.epochs is None:
+        _n = len(train_dataset)
+        _target_eff = min(8, max(1, _n // 32))
+        if args.batch > _target_eff:
+            args.batch = _target_eff          # a smaller micro-batch only lowers memory use
+        if not _user_set_accum:
+            args.grad_accum = max(1, round(_target_eff / args.batch))
+        _eff = args.batch * args.grad_accum
+        _spe = max(1, -(-_n // _eff))                      # optimizer steps per epoch (ceil)
+        args.epochs = min(10, max(3, -(-250 // _spe)))     # aim for ~250 steps, 3..10 epochs
+        print(f"[train] Auto schedule  : {_n} examples, effective batch {_eff} -> {args.epochs} epochs "
+              f"(~{_spe * args.epochs} optimizer steps). Pass --epochs N to choose your own.")
 
     steps_per_epoch = max(1, len(train_dataset) // (args.batch * args.grad_accum))
     # Warmup over 10% of total steps — matches Axolotl/LLaMA-Factory standard.

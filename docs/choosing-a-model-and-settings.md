@@ -62,7 +62,7 @@ The defaults suit most projects. When to change them:
 
 | Setting | Default | Change it when |
 |---|---|---|
-| Epochs | 3 | The model hasn't learned your facts: try 4-5. It repeats answers word for word or ignores the question: try 1-2. |
+| Epochs | Auto | Leave blank and the Studio chooses (3-10) from your dataset size, so small datasets get more passes. Type a number to override. If the model parrots answers word for word on unrelated questions, lower it. |
 | Learning rate | 2e-4 | Rarely. Lower it (1e-4) if training looks unstable. |
 | LoRA rank | 16 (32 for models of 1.5B or less) | You have a lot of varied data: try 32-64. |
 | Max sequence length | 2048 | Your answers are long, or you are short on memory (1024 saves a lot). |

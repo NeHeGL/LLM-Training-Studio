@@ -73,4 +73,9 @@ After training and exporting, chat with the model and ask:
 - a few things you never covered (does it admit it doesn't know?).
 
 If it fails on reworded questions, add more phrasings. If it parrots answers word for word
-on unrelated questions, you may be training too long: try fewer epochs.
+on unrelated questions, you may be training too long: set fewer epochs.
+
+**Why the Studio trains longer on small datasets:** a model only memorizes a fact after many
+small learning steps. In our tests, 45 Q&A pairs trained for 18 steps reproduced none of the
+answers; the same data trained for about 270 steps reproduced most of them, a third word for
+word. So with the default Auto setting, the fewer pairs you have, the more passes it makes.

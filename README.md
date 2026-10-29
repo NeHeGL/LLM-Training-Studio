@@ -406,7 +406,7 @@ Fine-tunes the LoRA adapter using the active model's dataset. All flags:
 
 | Flag                      | Default | Effect                                                        |
 |---------------------------|---------|---------------------------------------------------------------|
-| `--epochs N`              | 3       | Training passes over the dataset                              |
+| `--epochs N`              | auto    | Training passes. Auto picks 3-10 from your dataset size so small sets still get enough steps |
 | `--batch N`               | 2       | Per-device batch size (watch VRAM)                            |
 | `--grad_accum N`          | 4       | Gradient accumulation steps                                   |
 | `--lr FLOAT`              | 2e-4    | Learning rate                                                 |

@@ -66,8 +66,12 @@ Send the `.gguf` file. That is all anyone needs. For a file you will share, expo
 - **The model remembers its system prompt.** Whatever you set in *Model Settings* is baked in.
   Apps that let you override the system prompt will override it.
 - **Models with a thinking mode** (the newer Qwen and Gemma 4 families) are trained and
-  exported with thinking switched off, so replies come out directly. Gemma 4 is still
-  experimental and may show a "thinking" section in some apps, especially after a short training run.
+  exported with thinking switched off. **Ollama turns thinking on by default** for these
+  families and uses its own built-in prompt format for them, so you may see a "thinking"
+  section before the answer, and a short token limit can run out before the answer starts.
+  To switch it off: `ollama run <model> --think=false`, or type `/set nothink` inside a
+  chat, or send `"think": false` in an API request. LM Studio and llama.cpp use the format
+  stored in the file, which already has thinking off. Gemma 4 is still experimental.
 - **Ollama and unusual chat formats.** For a few model families the Studio can't write a
   verified Ollama recipe. It leaves that part out and Ollama uses the format stored inside the
   `.gguf`. If answers look odd in Ollama, try the same file in LM Studio.

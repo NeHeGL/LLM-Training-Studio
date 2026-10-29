@@ -299,8 +299,8 @@
               <div id="ts-vram-estimate" style="font-size:0.82rem;color:#94a3b8;margin-top:2px;"></div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <label style="color:#94a3b8;">Epochs</label>
-              <input id="ts-epochs" type="number" min="1" max="20" value="3" onchange="_debouncedSaveTraining()" oninput="_debouncedSaveTraining()" style="width:60px;background:#0d1520;border:1px solid #1e2a3a;border-radius:4px;padding:2px 6px;font-size:0.82rem;color:#e2e8f0;font-family:inherit;outline:none;text-align:right;">
+              <label style="color:#94a3b8;" title="Leave blank for Auto: small datasets get more epochs so the model really learns your facts.">Epochs</label>
+              <input id="ts-epochs" type="number" min="1" max="30" value="" placeholder="auto" onchange="_debouncedSaveTraining()" oninput="_debouncedSaveTraining()" style="width:60px;background:#0d1520;border:1px solid #1e2a3a;border-radius:4px;padding:2px 6px;font-size:0.82rem;color:#e2e8f0;font-family:inherit;outline:none;text-align:right;">
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <label style="color:#94a3b8;">Batch size</label>
@@ -1385,7 +1385,7 @@ async function saveTrainingSettings() {
   if (!_activeModel) { toast('No active model', 'error'); return; }
   const settings = {
     quant:      document.getElementById('ts-quant').value,
-    epochs:     parseInt(document.getElementById('ts-epochs').value) || 3,
+    epochs:     parseInt(document.getElementById('ts-epochs').value) || 0,   // 0 = auto
     batch:      parseInt(document.getElementById('ts-batch').value)  || 2,
     lr:         document.getElementById('ts-lr').value.trim() || '1e-4',
     lora_r:     parseInt(document.getElementById('ts-lora-r').value) || 16,
@@ -1456,7 +1456,7 @@ function updateVramEstimate() {
 function _applyTrainingSettings(ts) {
   if (!ts) return;
   if (ts.quant)              document.getElementById('ts-quant').value      = ts.quant;
-  if (ts.epochs)             document.getElementById('ts-epochs').value     = ts.epochs;
+  document.getElementById('ts-epochs').value = ts.epochs ? ts.epochs : '';   // blank = auto
   if (ts.batch)              document.getElementById('ts-batch').value      = ts.batch;
   if (ts.lr)                 document.getElementById('ts-lr').value         = ts.lr;
   if (ts.lora_r)             document.getElementById('ts-lora-r').value     = ts.lora_r;

@@ -1546,6 +1546,8 @@ def main():
     tok_path = lora_dir if os.path.exists(os.path.join(lora_dir, "tokenizer_config.json")) else BASE_MODEL
     print(f"[export] Loading tokenizer from: {tok_path}")
     tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=_needs_remote_code(BASE_MODEL))
+    from chat_format import prepare_tokenizer
+    prepare_tokenizer(tokenizer)
 
     # Load the system prompt from config so it can be baked into the chat template.
     # This is the correct way to embed identity — convert_hf_to_gguf.py reads the

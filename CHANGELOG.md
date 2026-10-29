@@ -7,6 +7,7 @@
 - **Verified, ungated catalog**: `tools/verify_catalog.py` checks every model against the Hugging Face API (existence, gating, license). Removed the nonexistent Qwen3-72B and outdated models; added Qwen3.5 0.8B/2B, Qwen3.6-27B, Phi-4-mini, OLMo-3-7B, Ministral-3-8B and Gemma 4 (experimental).
 - **Custom models and Hugging Face token** (optional, under Model Settings > Advanced), with plain-language errors for gated or missing models.
 - **LoRA layer detection** from the loaded model; optional rsLoRA, DoRA and NEFTune.
+- **Automatic training schedule**: epochs and effective batch are chosen from the dataset size (3-10 epochs). With the old fixed 3 epochs / batch 8, a 45-pair dataset got only 18 optimizer steps and the model reproduced none of the trained answers; about 270 steps reproduced most of them. Type a number in Epochs to override.
 - **VRAM-aware batch size** scales from 8 GB cards to 96 GB.
 - **New export types**: `q5_k_m`, `q6_k`, and an imatrix "better quality" option for 4/5/6-bit files.
 - **Export fixes for transformers 5**: restored `tokenizer_class` and `config.json`, patched converter config loading, and native-architecture loading instead of repository code.

@@ -54,7 +54,7 @@ Press **Build Dataset** first and make sure you have Q&A pairs. See
 [Writing good training data](writing-good-training-data.md).
 
 **Loss goes to 0 very quickly / the model parrots answers**
-That's overfitting: too many epochs for too little data. Lower the epochs or add more varied pairs.
+That's overfitting: too many passes over too little data. Set a lower number of epochs (the Studio picks automatically unless you type one) or add more varied pairs.
 
 **Training was interrupted**
 Press **Train** again; it resumes from the last checkpoint. Use **Reset + Train** to start over.
@@ -78,7 +78,7 @@ Make sure Ollama is installed and running, then use the `ollama create` command 
 
 **It doesn't know my facts / gives generic answers**
 - Add more pairs, with each important fact asked in several different ways.
-- Try 4-5 epochs.
+- Check the log for the "Auto schedule" line (how many optimizer steps it used). Small datasets need a few hundred steps to be learned; try setting more epochs yourself.
 - Test with the exact questions from your data first, then reworded ones.
 - Remember that fine-tuning teaches style and a focused set of facts; it isn't a search engine.
 
@@ -87,8 +87,11 @@ Normal for any language model, and worse when questions drift away from your dat
 "I don't know" examples for things outside your topic.
 
 **It shows a "thinking" section or `<think>` text**
-Models with a thinking mode are trained with it off. If you still see it, retrain with a few
-more epochs, or try the file in a different app. Gemma 4 is experimental in this respect.
+Models with a thinking mode are trained with it off, but **Ollama switches thinking back on by
+default** for the Qwen 3 and Gemma 4 families. Turn it off with `ollama run <model> --think=false`
+(or `/set nothink` in a chat, or `"think": false` in API requests). The same file in LM Studio or
+llama.cpp uses the format stored inside it, which has thinking off. If the answer comes back
+empty, the token limit ran out while the model was still thinking: raise it or turn thinking off.
 
 ## Still stuck?
 
