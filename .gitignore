@@ -69,3 +69,9 @@ desktop-view/__pycache__/
 .DS_Store
 Thumbs.db
 .git_disabled/
+.hf_token
+
+# graphify (local code knowledge graph and its editor integration) - not part of the project
+graphify-out/
+CLAUDE.md
+.claude/

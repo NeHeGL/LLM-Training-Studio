@@ -80,6 +80,11 @@ if not sys.pycache_prefix:
 
 import re as _re
 
+def _needs_remote_code(model_id):
+    from hf_auth import needs_remote_code
+    return needs_remote_code(model_id)
+
+
 def _safe_name(name):
     """Sanitise a name for use as a filesystem directory component."""
     return _re.sub(r'[^\w\-]', '_', name.strip())
@@ -529,6 +534,37 @@ def _get_lora_target_modules(base_model_name: str) -> list:
             "gate_proj", "up_proj", "down_proj"]
 
 
+def _detect_lora_targets(model, fallback):
+    """Pick LoRA targets from the loaded model's real Linear layers.
+
+    Handles fused projections (Phi-3/4 qkv_proj / gate_up_proj), GPT-NeoX names, etc.,
+    and for multimodal models restricts adapters to the text decoder so vision/audio
+    towers aren't touched.  Returns a list of leaf names, a regex string, or `fallback`.
+    """
+    import torch.nn as _nn
+    preferred = ["q_proj", "k_proj", "v_proj", "o_proj", "qkv_proj", "gate_proj",
+                 "up_proj", "gate_up_proj", "down_proj", "query_key_value",
+                 "dense", "dense_h_to_4h", "dense_4h_to_h", "fc1", "fc2"]
+    skip = ("vision", "visual", "audio", "image", "multi_modal", "mm_projector", "embed_vision",
+            "embed_audio", "pixtral")
+    leaves, multimodal = set(), False
+    for name, mod in model.named_modules():
+        if not isinstance(mod, _nn.Linear):
+            continue
+        if any(k in name.lower() for k in skip):
+            multimodal = True
+            continue
+        leaves.add(name.split(".")[-1])
+    chosen = [n for n in preferred if n in leaves]
+    if not chosen:
+        return fallback
+    if multimodal:
+        alt = "|".join(chosen)
+        bad = "|".join(skip)
+        return rf"^(?!.*(?:{bad})).*\.(?:{alt})$"
+    return chosen
+
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 
 def parse_args():
@@ -565,6 +601,15 @@ def parse_args():
                         "shorter seq-len (1024), and CPU-offloads the optimizer. "
                         "Slowest but uses the least RAM — use if you are crashing "
                         "due to out-of-memory errors.")
+    p.add_argument("--rslora",      action="store_true",
+                   help="Rank-stabilised LoRA: scale alpha/sqrt(r) so higher ranks keep learning. "
+                        "Alpha is re-derived so the starting strength matches plain LoRA.")
+    p.add_argument("--dora",        action="store_true",
+                   help="DoRA (weight-decomposed LoRA). Often a bit better quality, ~20-30%% "
+                        "slower and more VRAM. Not available with every 4-bit setup.")
+    p.add_argument("--neftune",     type=float, default=0.0,
+                   help="NEFTune embedding noise alpha (0 = off, 5 = typical). Helps chatty "
+                        "style tuning but can blur exact facts, so it is off by default.")
     p.add_argument("--eval-split",  dest="eval_split", action="store_true",
                    help="Hold out 5%% of the dataset for validation (overfitting check). "
                         "Default: OFF — train on 100%% of the data.")
@@ -595,61 +640,66 @@ def get_dataset_path(fmt, dataset_dir):
     return path
 
 
-def make_text_dataset(raw_dataset, fmt, tokenizer):
-    """Convert each record to a single formatted text string for SFTTrainer.
+def make_masked_dataset(raw_dataset, tokenizer, max_len):
+    """Tokenize with the model's own chat template; loss only on the assistant reply.
 
-    keep_in_memory=False + load_from_cache_file=False ensures the Arrow-backed
-    dataset is memory-mapped from disk rather than copied into RAM, which is the
-    single biggest source of RAM growth on large datasets.
+    Produces input_ids + labels (-100 on system/user tokens) so the model learns
+    answers, not to parrot prompts.  Works for both dataset formats (chatml
+    'messages' and alpaca fields) and any model, including ones TRL's
+    assistant_only_loss can't patch (vision-capable architectures).
 
-    On Windows, the HuggingFace datasets library tries to rename a temp Arrow
-    file over the existing cached file during .map().  Windows refuses this when
-    the cache file is already memory-mapped by another process (e.g. a previous
-    training run that was paused/refreshed), raising WinError 1224.  Passing a
-    unique new_fingerprint forces datasets to write to a fresh cache path each
-    run, completely avoiding the rename-over-locked-file conflict.
+    A unique new_fingerprint avoids a Windows WinError 1224 (rename over a
+    memory-mapped cache file) when a previous run's cache is still mapped.
     """
     import time as _time
-    _run_id = str(int(_time.time()))   # unique per training invocation
+    from chat_format import tokenize_masked, to_messages
 
-    if fmt == "chatml":
-        def _apply(examples):
-            texts = []
-            for msgs in examples["messages"]:
-                text = tokenizer.apply_chat_template(
-                    msgs, tokenize=False, add_generation_prompt=False)
-                texts.append(text)
-            return {"text": texts}
-        return raw_dataset.map(
-            _apply, batched=True,
-            remove_columns=raw_dataset.column_names,
-            keep_in_memory=False,       # stream from disk — don't load full dataset into RAM
-            load_from_cache_file=False, # always re-map so stale cache doesn't bloat memory
-            new_fingerprint=f"chatml_{_run_id}",  # unique path avoids WinError 1224 rename conflict
-            desc="Applying ChatML template",
-        )
-    else:  # alpaca
-        def _apply(examples):
-            texts = []
-            systems = examples.get("system", [""] * len(examples["instruction"]))
-            for sys_p, instr, out in zip(systems,
-                                         examples["instruction"],
-                                         examples["output"]):
-                text = (
-                    f"<|im_start|>system\n{sys_p}<|im_end|>\n"
-                    f"<|im_start|>user\n{instr}<|im_end|>\n"
-                    f"<|im_start|>assistant\n{out}<|im_end|>"
-                )
-                texts.append(text)
-            return {"text": texts}
-        return raw_dataset.map(
-            _apply, batched=True,
-            remove_columns=raw_dataset.column_names,
-            keep_in_memory=False,
-            load_from_cache_file=False,
-            new_fingerprint=f"alpaca_{_run_id}",  # unique path avoids WinError 1224 rename conflict
-            desc="Applying Alpaca template",
-        )
+    def _apply(examples):
+        keys = list(examples.keys())
+        out_ids, out_labels = [], []
+        for i in range(len(examples[keys[0]])):
+            rec = {k: examples[k][i] for k in keys}
+            ids, labels = tokenize_masked(tokenizer, to_messages(rec), max_len)
+            out_ids.append(ids)
+            out_labels.append(labels)
+        return {"input_ids": out_ids, "labels": out_labels}
+
+    return raw_dataset.map(
+        _apply, batched=True, batch_size=64,
+        remove_columns=raw_dataset.column_names,
+        keep_in_memory=False,
+        load_from_cache_file=False,
+        new_fingerprint=f"masked_{int(_time.time())}",
+        desc="Tokenizing (answer-only loss)",
+    )
+
+
+def _estimate_params_b(model_id):
+    """Parameter count in billions: local safetensors headers / Hub metadata, then name, then 7."""
+    import json as _j, struct as _st, glob as _g
+    try:
+        if os.path.isdir(model_id):
+            total = 0
+            for f in _g.glob(os.path.join(model_id, "*.safetensors")):
+                with open(f, "rb") as fh:
+                    hdr = _j.loads(fh.read(_st.unpack("<Q", fh.read(8))[0]))
+                for k, v in hdr.items():
+                    if k != "__metadata__" and v.get("dtype") in ("F16", "BF16", "F32"):
+                        n = 1
+                        for d in v["shape"]:
+                            n *= d
+                        total += n
+            if total:
+                return total / 1e9
+        else:
+            from huggingface_hub import model_info
+            st = getattr(model_info(model_id), "safetensors", None)
+            if st and getattr(st, "total", 0):
+                return st.total / 1e9
+    except Exception:
+        pass
+    m = _re.findall(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", os.path.basename(model_id.rstrip("/\\")).lower().replace("-", " ").replace("_", " "))
+    return float(m[-1]) if m else 7.0
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -931,28 +981,7 @@ def main():
         except Exception:
             vram_gb = 0
 
-    # Estimate model parameter count from base model name (rough heuristic)
-    _bm_lower = BASE_MODEL.lower()
-    if any(x in _bm_lower for x in ["72b", "70b"]):
-        model_params_b = 70
-    elif any(x in _bm_lower for x in ["32b", "30b"]):
-        model_params_b = 32
-    elif any(x in _bm_lower for x in ["14b"]):
-        model_params_b = 14
-    elif any(x in _bm_lower for x in ["13b", "12b"]):
-        model_params_b = 13
-    elif any(x in _bm_lower for x in ["8b", "9b"]):
-        model_params_b = 8
-    elif any(x in _bm_lower for x in ["7b"]):
-        model_params_b = 7
-    elif any(x in _bm_lower for x in ["3b"]):
-        model_params_b = 3
-    elif any(x in _bm_lower for x in ["1.5b", "1b"]):
-        model_params_b = 1
-    elif any(x in _bm_lower for x in ["0.5b"]):
-        model_params_b = 0.5
-    else:
-        model_params_b = 7  # default assumption
+    model_params_b = _estimate_params_b(BASE_MODEL)
 
     # Rough VRAM needed for 4-bit weights (bytes_per_param ≈ 0.5 for nf4 + overhead)
     # Rule of thumb: model_gb_4bit ≈ model_params_b * 0.6
@@ -966,15 +995,16 @@ def main():
     _user_set_accum = "--grad_accum" in sys.argv
 
     if not _user_set_batch:
-        if vram_gb >= 40:
+        # Scale the micro-batch with VRAM left after the weights (not total VRAM), so a
+        # 32 GB card running a 27B model isn't treated like a 32 GB card running a 3B.
+        _free = vram_gb - (model_vram_4bit if use_4bit else model_vram_fp16)
+        if _free >= 60:      # 80-96 GB class (RTX PRO 6000 etc.)
+            args.batch = 8
+        elif _free >= 24:    # 32-48 GB class (RTX 5090, A6000...)
             args.batch = 4
-        elif vram_gb >= 24:
+        elif _free >= 10:    # 16-24 GB class
             args.batch = 2
-        elif vram_gb >= 16:
-            args.batch = 2
-        elif vram_gb >= 10:
-            args.batch = 1
-        else:
+        else:                # 8-12 GB class or tight fit
             args.batch = 1
 
     if not _user_set_accum:
@@ -1096,21 +1126,18 @@ def main():
 
     # ── 1. Validate model exists on HuggingFace ───────────────────────────────
     print(f"[train] Checking model exists: {BASE_MODEL}")
-    try:
-        from huggingface_hub import model_info
-        model_info(BASE_MODEL)
-        print(f"[train] Model found ✓")
-    except Exception:
-        print(f"\n[train] ERROR: Model '{BASE_MODEL}' was not found on HuggingFace.")
-        print(f"[train] The model ID you specified in config.json does not exist.")
-        print(f"[train] Check the exact model ID at: https://huggingface.co/models")
-        print(f"[train] Then update 'base_model' in config.json and try again.")
+    from hf_auth import check_model
+    _ok, _msg = check_model(BASE_MODEL)
+    if _ok:
+        print(f"[train] Model: {_msg}")
+    else:
+        print(f"\n[train] ERROR: {_msg}")
         _restore_sleep()
         sys.exit(1)
 
     # ── 2. Tokenizer ──────────────────────────────────────────────────────────
     print("[train] Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=_needs_remote_code(BASE_MODEL))
 
     # Ensure ChatML tokens are recognized as single special tokens.
     # Only add tokens that are NOT already in the vocabulary — adding tokens that
@@ -1118,7 +1145,10 @@ def main():
     # which forces it to save the entire embedding matrix on every checkpoint save
     # instead of just the LoRA adapters (bloats checkpoints and triggers a warning).
     _existing_vocab = set(tokenizer.get_vocab().keys())
-    special_tokens = [t for t in ["<|im_start|>", "<|im_end|>"] if t not in _existing_vocab]
+    # Only needed when the base has no chat template and we inject ChatML below; models with a
+    # native template (Gemma, Phi, Mistral, ...) keep their own tokens and vocabulary untouched.
+    special_tokens = ([] if getattr(tokenizer, "chat_template", None) else
+                      [t for t in ["<|im_start|>", "<|im_end|>"] if t not in _existing_vocab])
     if special_tokens:
         tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
     # Note: We resize embeddings later after loading the model (only if vocab actually grew)
@@ -1187,7 +1217,7 @@ def main():
             # Linear to Params4bit. For models too large to fit a single GPU, "auto"
             # is used instead to allow multi-GPU or CPU offload.
             device_map          = device_map_4bit,
-            trust_remote_code   = True,
+            trust_remote_code   = _needs_remote_code(BASE_MODEL),
         )
 
         # Critical for 4-bit stability: prepares layer norms and heads for training
@@ -1201,7 +1231,7 @@ def main():
             BASE_MODEL,
             dtype             = dtype if cuda else torch.float32,
             device_map        = "auto" if cuda else None,
-            trust_remote_code = True,
+            trust_remote_code = _needs_remote_code(BASE_MODEL),
         )
 
     # Resize embeddings to match what the checkpoint/adapter was trained with.
@@ -1290,7 +1320,13 @@ def main():
               f"(was {args.lora_alpha}), dropout={_lora_dropout} (was 0.05)")
         print(f"[train]   Higher rank+alpha helps override base-model language bleeding.")
 
-    _lora_targets = _get_lora_target_modules(BASE_MODEL)
+    if args.rslora:
+        # rsLoRA scales by alpha/sqrt(r) instead of alpha/r; keep the same starting strength.
+        _lora_alpha = max(1, round(_lora_alpha / _lora_r * (_lora_r ** 0.5)))
+        print(f"[train] rsLoRA on: alpha re-derived to {_lora_alpha} (scale alpha/sqrt(r))")
+    if args.dora:
+        print("[train] DoRA on")
+    _lora_targets = _detect_lora_targets(model, _get_lora_target_modules(BASE_MODEL))
     print(f"[train] LoRA targets   : {_lora_targets}")
     lora_cfg = LoraConfig(
         task_type      = TaskType.CAUSAL_LM,
@@ -1299,6 +1335,8 @@ def main():
         lora_dropout   = _lora_dropout,
         target_modules = _lora_targets,
         bias           = "none",
+        use_rslora     = args.rslora,
+        use_dora       = args.dora,
     )
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
@@ -1340,10 +1378,10 @@ def main():
     # files on disk instead of loading everything into RAM.  This is the single
     # biggest RAM saving — a 10 k-example dataset can occupy several GB in RAM
     # if accidentally kept in memory.
-    print(f"[train] Applying {args.fmt.upper()} template to dataset...")
+    print(f"[train] Tokenizing dataset with the model's chat template (loss on answers only)...")
     raw     = load_dataset("json", data_files={"train": dataset_path},
                            split="train", keep_in_memory=False)
-    dataset = make_text_dataset(raw, args.fmt, tokenizer)
+    dataset = make_masked_dataset(raw, tokenizer, args.max_seq_len)
     # Release the raw dataset immediately — only the formatted `dataset` is needed
     del raw
     import gc; gc.collect()
@@ -1501,7 +1539,7 @@ def main():
         # Shown to improve instruction-following quality on fine-tuned models with
         # no extra compute cost. Alpha=5 is the standard recommended value.
         # Paper: https://arxiv.org/abs/2310.05914
-        neftune_noise_alpha         = 5,
+        neftune_noise_alpha         = (args.neftune or None),
     )
 
     # ── 7. Trainer + progress callback ───────────────────────────────────────

@@ -342,36 +342,41 @@ Both single-line and multi-line answers are supported. Pairs can be separated by
 
 All models are fully open — no HuggingFace account, no token, no gating. They download automatically on first training run.
 
-| Model                             | Size | Actual   | License    | Min VRAM (4-bit) | Notes                                                    |
-|-----------------------------------|------|----------|------------|------------------|----------------------------------------------------------|
-| `HuggingFaceTB/SmolLM2-360M`      | 360M | 360M     | Apache 2.0 | 1 GB             | Smallest — rapid testing or extremely limited VRAM       |
-| `Qwen/Qwen2.5-0.5B`               | 0.5B | 0.5B     | Qwen       | 1 GB             | Smallest Qwen — very limited VRAM only                   |
-| `Qwen/Qwen3-0.6B`                 | 0.6B | 0.6B     | Apache 2.0 | 1 GB             | Qwen3 — hybrid thinking, newest architecture             |
-| `Qwen/Qwen2.5-1.5B`               | 1.5B | 1.5B     | Qwen       | 2 GB             | Good entry-level option                                  |
-| `Qwen/Qwen3-1.7B`                 | 1.7B | 1.7B     | Apache 2.0 | 2 GB             | Qwen3 — stronger than Qwen2.5-1.5B                       |
-| `HuggingFaceTB/SmolLM2-1.7B`      | 1.7B | 1.7B     | Apache 2.0 | 2 GB             | Efficient for size                                       |
-| `EleutherAI/pythia-1.4b`          | 1.4B | 1.4B     | Apache 2.0 | 2 GB             | Rock-solid GPT-NeoX architecture, no custom code         |
-| `microsoft/phi-2`                 | 2.7B | 2.8B     | MIT        | 2 GB             | Strong reasoning, "textbook" trained                     |
-| `microsoft/Phi-3.5-mini-instruct` | 3.8B | 3.8B     | MIT        | 3 GB             | 128K context, outperforms many 7B models                 |
-| `Qwen/Qwen2.5-3B`                 | 3B   | 3.1B     | Qwen       | 3 GB             | Good size/capability balance                             |
-| `Qwen/Qwen3-4B`                   | 4B   | 4B       | Apache 2.0 | 3 GB             | Qwen3 — outperforms many older 7B models                 |
-| `HuggingFaceTB/SmolLM3-3B`        | 3B   | 3B       | Apache 2.0 | 3 GB             | Fully open data + training recipe; long-context reasoner |
-| `Qwen/Qwen3.5-4B`                 | 4B   | 4B       | Apache 2.0 | 3 GB             | ⭐ Newer generation than Qwen3-4B                         |
-| `Qwen/Qwen2.5-7B`                 | 7B   | **7.6B** | Qwen       | 5 GB             | ⭐ **Recommended** — best for 8–16 GB VRAM                |
-| `Qwen/Qwen3-8B`                   | 8B   | 8B       | Apache 2.0 | 5 GB             | ⭐ Latest Qwen — strong reasoning & instruction following |
-| `allenai/OLMo-2-1124-7B`          | 7B   | 7B       | Apache 2.0 | 5 GB             | Fully open (data+code), great for research               |
-| `mistralai/Mistral-7B-v0.3`       | 7B   | 7.2B     | Apache 2.0 | 5 GB             | Improved tokenizer over v0.1                             |
-| `mistralai/Mistral-7B-v0.1`       | 7B   | 7.2B     | Apache 2.0 | 5 GB             | Original release, well-tested for fine-tuning            |
-| `EleutherAI/pythia-6.9b`          | 6.9B | 6.9B     | Apache 2.0 | 5 GB             | Standard GPT-NeoX, very reliable for fine-tuning         |
-| `Qwen/Qwen3.5-9B`                 | 9B   | 9B       | Apache 2.0 | 6 GB             | Newer generation; fills the gap between 8B and 13B       |
-| `allenai/OLMo-2-1124-13B`         | 13B  | 13B      | Apache 2.0 | 8 GB             | Fully open, strong mid-size model                        |
-| `Qwen/Qwen2.5-14B`                | 14B  | 14B      | Qwen       | 9 GB             | Excellent for 24 GB cards                                |
-| `Qwen/Qwen3-14B`                  | 14B  | 14B      | Apache 2.0 | 9 GB             | Latest Qwen — reasoning, coding, multilingual            |
-| `Qwen/Qwen3.5-27B`                | 27B  | 27B      | Apache 2.0 | 17 GB            | Dense model; step up from 14B, below the 32B tier        |
-| `Qwen/Qwen2.5-32B`                | 32B  | 32B      | Qwen       | 20 GB            | Near GPT-4 quality                                       |
-| `Qwen/Qwen3-32B`                  | 32B  | 32B      | Apache 2.0 | 20 GB            | Top open-source quality, latest Qwen generation          |
-| `Qwen/Qwen2.5-72B`                | 72B  | 72B      | Qwen       | 42 GB            | Top open-source quality — multi-GPU only                 |
-| `Qwen/Qwen3-72B`                  | 72B  | 72B      | Apache 2.0 | 42 GB            | State-of-the-art open model — multi-GPU or cloud only    |
+| Model | Size | Actual | License | Min VRAM (4-bit) | Notes |
+|---|---|---|---|---|---|
+| `HuggingFaceTB/SmolLM2-360M` | 360M | 0.36B | Apache 2.0 | 1 GB | Smallest practical model for tiny VRAM or rapid testing. |
+| `Qwen/Qwen2.5-0.5B` | 0.5B | 0.49B | Apache 2.0 | 1 GB | smallest Qwen, only for very limited VRAM. Limited knowledge. |
+| `Qwen/Qwen3-0.6B` | 0.6B | 0.75B | Apache 2.0 | 1 GB | Newer architecture than Qwen2.5, hybrid thinking mode. |
+| `Qwen/Qwen3.5-0.8B` | 0.8B | 0.87B | Apache 2.0 | 1 GB | Newest-generation tiny model. |
+| `Qwen/Qwen2.5-1.5B` | 1.5B | 1.54B | Apache 2.0 | 2 GB | slightly more capable than average 1B models. |
+| `Qwen/Qwen3-1.7B` | 1.7B | 2.03B | Apache 2.0 | 2 GB | Stronger than Qwen2.5-1.5B with hybrid thinking. |
+| `HuggingFaceTB/SmolLM2-1.7B` | 1.7B | 1.71B | Apache 2.0 | 2 GB | Efficient and capable for its size. |
+| `Qwen/Qwen3.5-2B` | 2B | 2.27B | Apache 2.0 | 2 GB | Strong for 4–6 GB cards. |
+| `Qwen/Qwen2.5-3B` | 3B | 3.09B | Qwen | 3 GB | good balance of size and capability for fine-tuning. |
+| `HuggingFaceTB/SmolLM3-3B` | 3B | 3.08B | Apache 2.0 | 3 GB | Fully open data + training recipe; long-context reasoner, punches above its weight. |
+| `microsoft/Phi-3.5-mini-instruct` | 3.8B | 3.82B | MIT | 3 GB | 128K context, outperforms many 7B models. Great for fine-tuning. |
+| `microsoft/Phi-4-mini-instruct` | 3.8B | 3.84B | MIT | 3 GB | Strong reasoning for 3.8B; successor to Phi-3.5-mini. |
+| `Qwen/Qwen3-4B` | 4B | 4.02B | Apache 2.0 | 3 GB | Excellent quality at 4B; outperforms many older 7B models. |
+| `Qwen/Qwen3.5-4B` | 4B | 4.66B | Apache 2.0 | 3 GB | Newer generation than Qwen3-4B. |
+| `google/gemma-4-E2B-it` | E2B 🧪 | 5.12B | Apache 2.0 | 4 GB | (unlike Gemma 3). Experimental: multimodal architecture. |
+| `Qwen/Qwen2.5-7B` | 7B | 7.62B | Apache 2.0 | 5 GB | recommended for 8–16 GB VRAM. Excellent quality with 4-bit QLoRA. |
+| `allenai/OLMo-2-1124-7B` | 7B | 7.3B | Apache 2.0 | 5 GB | , fully open (data + code). Allen AI. Excellent for research fine-tuning. |
+| `mistralai/Mistral-7B-v0.3` | 7B | 7.25B | Apache 2.0 | 5 GB | Improved tokenizer over v0.1. Fast inference, strong instruction following. |
+| `allenai/Olmo-3-7B-Instruct` | 7B | 7.3B | Apache 2.0 | 5 GB | , fully open (data + code). Successor to OLMo 2. |
+| `Qwen/Qwen3-8B` | 8B | 8.19B | Apache 2.0 | 5 GB | Latest Qwen generation; strong reasoning and instruction following. |
+| `google/gemma-4-E4B-it` | E4B 🧪 | 8.0B | Apache 2.0 | 5 GB | Experimental: multimodal architecture. |
+| `mistralai/Ministral-3-8B-Instruct-2512` | 8B 🧪 | 8.92B | Apache 2.0 | 6 GB | Experimental: multimodal architecture. |
+| `Qwen/Qwen3.5-9B` | 9B | 9.65B | Apache 2.0 | 6 GB | Newer generation; fills the gap between 8B and 13B nicely. |
+| `google/gemma-4-12B-it` | 12B 🧪 | 11.96B | Apache 2.0 | 8 GB | Experimental: multimodal architecture. |
+| `allenai/OLMo-2-1124-13B` | 13B | 13.72B | Apache 2.0 | 8 GB | , fully open. Allen AI. Strong mid-size model for fine-tuning. |
+| `Qwen/Qwen2.5-14B` | 14B | 14.77B | Apache 2.0 | 9 GB | excellent for 24 GB cards. Significantly better than 7B. |
+| `Qwen/Qwen3-14B` | 14B | 14.77B | Apache 2.0 | 9 GB | Latest generation; strong reasoning, coding, and multilingual. |
+| `Qwen/Qwen3.5-27B` | 27B | 27.78B | Apache 2.0 | 17 GB | Dense model; strong step up from 14B for 24+ GB cards, below the 32B tier. |
+| `Qwen/Qwen3.6-27B` | 27B | 27.78B | Apache 2.0 | 17 GB | Newest dense Qwen; for 24+ GB cards. |
+| `google/gemma-4-31B-it` | 31B 🧪 | 31.27B | Apache 2.0 | 20 GB | Experimental; for 24+ GB cards. |
+| `Qwen/Qwen2.5-32B` | 32B | 32.76B | Apache 2.0 | 20 GB | near GPT-4 quality. Needs 24+ GB for 4-bit. |
+| `Qwen/Qwen3-32B` | 32B | 32.76B | Apache 2.0 | 20 GB | Top open-source quality at 32B. Needs 24+ GB for 4-bit. |
+| `Qwen/Qwen2.5-72B` | 72B | 72.71B | Qwen | 42 GB | top open-source quality. Multi-GPU or cloud only. |
 
 > **ℹ️ Model sizes are calculated from actual tensor counts, not vendor marketing.**
 > The Studio reads the safetensors header of each model and counts every float parameter directly —
@@ -386,22 +391,18 @@ All models are fully open — no HuggingFace account, no token, no gating. They 
 > `model.safetensors.index.json` file (~50 KB) from HuggingFace to read the total stored byte count —
 > the full model weights are never downloaded just to calculate size.
 
-> **Why are some popular models excluded from the catalog?**  
-> Two reasons:
+> **Why are some popular models (Llama, Gemma 3) not in the catalog?**  
+> They are *gated*: Hugging Face makes you log in and accept a license before downloading. The catalog is
+> deliberately limited to models that download and run immediately. Every entry is checked against the Hugging Face API
+> (`python tools/verify_catalog.py`) for existence, gating, and license. Gemma 4 (Apache 2.0) *is* ungated and
+> is included, marked 🧪 experimental because it is a newer multimodal architecture.
 >
-> 1. **Gating** — Models like LLaMA, Gemma, and Mistral-7B v0.3+ are "gated" on HuggingFace. Before you can download them, you must create an account, visit each model's page, accept a license agreement, generate an API token, and configure it on your machine. If anything is missing or expired, training fails with a confusing auth error.
+> **Need a gated or custom model?** In the Studio open *Model Settings → Advanced*:
+> - type any Hugging Face model ID **or a local model folder** and click *Use custom model* (the Studio tells you
+>   plainly if the model is gated or missing), and
+> - optionally paste a Hugging Face token. It is stored locally in `.hf_token` (git-ignored) and used only for downloads.
 >
-> 2. **Compatibility issues** — Some models use custom code (`trust_remote_code=True`) with implementations that break on newer versions of `transformers`. For example, `microsoft/Phi-3-mini-4k-instruct` crashes with `KeyError: 'type'` in its `rope_scaling` config on current transformers builds. Models that require custom code are fragile — a package update can silently break them.
->
-> All models in this catalog are **fully open** (Apache 2.0, MIT, or Qwen license) and use **native transformers support** — no custom code, no gating, no token needed. They download automatically the first time you train.
->
-> If you specifically need a gated model like LLaMA or Gemma, you can type the model ID manually into the base model field — but you'll need a HuggingFace token first and must accept the model's license on huggingface.co.
->
-> **To add your HuggingFace credentials**, either:
-> - Run `huggingface-cli login` in your terminal and paste your token — it's saved to `~/.cache/huggingface/` and picked up automatically, or
-> - Set the `HF_TOKEN` environment variable to your token before launching (e.g. `set HF_TOKEN=hf_...` in cmd, or add it to your system environment variables)
->
-> Generate a token at: https://huggingface.co/settings/tokens
+> You still have to accept the model's license on huggingface.co once. Catalog models never need any of this.
 
 ---
 

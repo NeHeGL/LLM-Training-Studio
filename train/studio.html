@@ -255,6 +255,19 @@
               <div id="cfg-quant-note" style="font-size:0.82rem;color:#94a3b8;min-height:1.2em;margin-bottom:3px;"></div>
               <!-- Hidden input keeps the base model value in sync with the dropdown -->
               <input id="cfg-base-model" type="hidden">
+              <details style="margin-top:6px;">
+                <summary style="font-size:0.78rem;color:#64748b;cursor:pointer;">Advanced: custom model / Hugging Face token</summary>
+                <div style="display:flex;flex-direction:column;gap:5px;margin-top:6px;">
+                  <div style="font-size:0.76rem;color:#64748b;line-height:1.4;">Catalog models need no login. For any other Hugging Face ID or a local model folder, enter it here. Gated models (Llama, Gemma 3) also need a token and an accepted license.</div>
+                  <input id="cfg-custom-model" type="text" placeholder="org/model-name or C:\path	o\model"
+                    style="width:100%;background:#0d1520;border:1px solid #1e2a3a;border-radius:6px;padding:5px 8px;font-size:0.8rem;color:#e2e8f0;font-family:inherit;outline:none;">
+                  <button class="btn btn-primary" style="width:100%;font-size:0.76rem;padding:5px 10px;" onclick="useCustomModel()">Use custom model</button>
+                  <input id="cfg-hf-token" type="password" placeholder="Hugging Face token (optional)" autocomplete="off"
+                    style="width:100%;background:#0d1520;border:1px solid #1e2a3a;border-radius:6px;padding:5px 8px;font-size:0.8rem;color:#e2e8f0;font-family:inherit;outline:none;">
+                  <button class="btn" style="width:100%;font-size:0.76rem;padding:5px 10px;" onclick="saveHfToken()">Save token</button>
+                  <div id="cfg-hf-token-note" style="font-size:0.76rem;color:#64748b;"></div>
+                </div>
+              </details>
             </div>
           </div>
         </div>
@@ -309,8 +322,23 @@
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;border-top:1px solid #1e2a3a;margin-top:2px;">
               <input type="checkbox" id="ts-eval-split" onchange="saveTrainingSettings()"
                 style="width:14px;height:14px;accent-color:#38bdf8;cursor:pointer;flex-shrink:0;">
-              <span style="color:#94a3b8;line-height:1.4;">Hold out 5% for overfitting check<br><span style="font-size:0.72rem;color:#6b7fa0;">Trains on 95% of data. Requires 20+ examples.</span></span>
+              <span style="color:#94a3b8;line-height:1.4;">Hold out 5% for overfitting check<br><span style="font-size:0.72rem;color:#6b7fa0;">Trains on 95% of data, so ~5% of facts are never learned. Requires 20+ examples.</span></span>
             </label>
+            <details style="border-top:1px solid #1e2a3a;padding-top:4px;">
+              <summary style="color:#64748b;cursor:pointer;font-size:0.78rem;">Advanced LoRA options</summary>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-rslora" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">rsLoRA<br><span style="font-size:0.72rem;color:#6b7fa0;">Stabler learning at higher ranks (r&ge;32).</span></span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-dora" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">DoRA<br><span style="font-size:0.72rem;color:#6b7fa0;">Slightly better quality, ~25% slower, more VRAM.</span></span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-neftune" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">NEFTune noise<br><span style="font-size:0.72rem;color:#6b7fa0;">Chattier style; can blur exact facts, so off by default.</span></span>
+              </label>
+            </details>
           </div>
         </div>
       </div>
@@ -1357,6 +1385,9 @@ async function saveTrainingSettings() {
     lora_r:     parseInt(document.getElementById('ts-lora-r').value) || 16,
     seq_len:    parseInt(document.getElementById('ts-seq-len').value) || 2048,
     eval_split: document.getElementById('ts-eval-split').checked,
+    rslora:     document.getElementById('ts-rslora').checked,
+    dora:       document.getElementById('ts-dora').checked,
+    neftune:    document.getElementById('ts-neftune').checked ? 5 : 0,
   };
   try {
     const r = await fetch(API + '/models/update', {
@@ -1425,6 +1456,9 @@ function _applyTrainingSettings(ts) {
   if (ts.lora_r)             document.getElementById('ts-lora-r').value     = ts.lora_r;
   if (ts.seq_len)            document.getElementById('ts-seq-len').value    = ts.seq_len;
   if (ts.eval_split != null) document.getElementById('ts-eval-split').checked = !!ts.eval_split;
+  document.getElementById('ts-rslora').checked   = !!ts.rslora;
+  document.getElementById('ts-dora').checked     = !!ts.dora;
+  document.getElementById('ts-neftune').checked  = !!(ts.neftune > 0);
 }
 
 function _setQuantOptionsForVram(vram, bf16) {
@@ -1541,8 +1575,17 @@ function _buildCatalogDropdown(data) {
   // 1. If saved value is in catalog → use it
   // 2. If saved value is missing/empty → use recommended_base
   // 3. If saved value is stale (not in catalog) → use recommended_base
+  const isCustom = !!currentVal && !savedInCatalog;
   const effectiveVal = savedInCatalog ? currentVal
-                     : (data.recommended_base || '');
+                     : (isCustom ? currentVal : (data.recommended_base || ''));
+  if (isCustom) {
+    const ci = document.getElementById('cfg-custom-model');
+    if (ci && !ci.value) ci.value = currentVal;
+    const co = document.createElement('option');
+    co.value = currentVal;
+    co.textContent = '✏️ [custom] ' + currentVal;
+    sel.appendChild(co);
+  }
 
   // Add a blank "choose" option — disabled so user can't select it
   // Only shown if we have no effective value to pre-select
@@ -1631,6 +1674,46 @@ async function onCatalogSelect(modelId) {
   }
 }
 
+
+async function useCustomModel() {
+  const id = document.getElementById('cfg-custom-model').value.trim();
+  if (!id) { toast('Enter a model ID or folder path first', 'error'); return; }
+  try {
+    const r = await fetch(API + '/check-model', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id: id })
+    });
+    const j = await r.json();
+    if (!j.ok) { toast(j.message, 'error'); return; }
+  } catch (e) { /* offline: let training report it */ }
+  const sel = document.getElementById('cfg-base-model-select');
+  if (![...sel.options].some(o => o.value === id)) {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = '✏️ [custom] ' + id;
+    sel.appendChild(o);
+  }
+  sel.value = id;
+  document.getElementById('cfg-model-desc').textContent = 'Custom model — not in the catalog, so VRAM fit is not estimated.';
+  await onCatalogSelect(id);
+}
+
+async function saveHfToken() {
+  const inp = document.getElementById('cfg-hf-token');
+  try {
+    const r = await fetch(API + '/hf-token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inp.value })
+    });
+    const j = await r.json();
+    inp.value = '';
+    document.getElementById('cfg-hf-token-note').textContent = j.set ? 'Token saved locally.' : 'No token set.';
+    toast(j.set ? 'Hugging Face token saved' : 'Hugging Face token cleared', 'success');
+  } catch (e) { toast('Studio server is not running', 'error'); }
+}
+fetch(API + '/hf-token').then(r => r.json()).then(j => {
+  const n = document.getElementById('cfg-hf-token-note');
+  if (n) n.textContent = j.set ? 'Token saved locally.' : 'No token set (not needed for catalog models).';
+}).catch(() => {});
 
 function _showCatalogNotes(m) {
   const quantEl = document.getElementById('cfg-quant-note');
