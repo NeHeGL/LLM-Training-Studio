@@ -1449,15 +1449,12 @@ def main():
 
     # ── Validate model exists on HuggingFace ──────────────────────────────────
     print(f"[export] Checking model exists: {BASE_MODEL}")
-    try:
-        from huggingface_hub import model_info
-        model_info(BASE_MODEL)
-        print(f"[export] Model found ✓")
-    except Exception:
-        print(f"\n[export] ERROR: Model '{BASE_MODEL}' was not found on HuggingFace.")
-        print(f"[export] The model ID you specified in config.json does not exist.")
-        print(f"[export] Check the exact model ID at: https://huggingface.co/models")
-        print(f"[export] Then update 'base_model' in config.json and try again.")
+    from hf_auth import check_model
+    _ok, _msg = check_model(BASE_MODEL)
+    if _ok:
+        print(f"[export] Model: {_msg}")
+    else:
+        print(f"\n[export] ERROR: {_msg}")
         _restore_sleep()
         sys.exit(1)
 

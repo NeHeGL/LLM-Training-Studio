@@ -177,7 +177,6 @@ def get_dataset_dir():
 #             quant ("4bit"|"fp16"|"fp32"), bf16_ok, description
 
 MODEL_CATALOG = [
-    # ── Sub-1B ────────────────────────────────────────────────────────────────
     {
         "id": "HuggingFaceTB/SmolLM2-360M",
         "params_b": 0.36,
@@ -202,7 +201,14 @@ MODEL_CATALOG = [
         "description": "Qwen3 0.6B — Apache 2.0, no gating. Newer architecture than Qwen2.5, hybrid thinking mode.",
         "tag": "0.6B",
     },
-    # ── 1–2B ──────────────────────────────────────────────────────────────────
+    {
+        "id": "Qwen/Qwen3.5-0.8B",
+        "params_b": 0.87,
+        "min_vram_4bit": 1,
+        "min_vram_fp16": 3,
+        "description": "Qwen3.5 0.8B — Apache 2.0, no gating. Newest-generation tiny model.",
+        "tag": "0.8B",
+    },
     {
         "id": "Qwen/Qwen2.5-1.5B",
         "params_b": 1.5,
@@ -228,29 +234,12 @@ MODEL_CATALOG = [
         "tag": "1.7B",
     },
     {
-        "id": "EleutherAI/pythia-1.4b",
-        "params_b": 1.4,
-        "min_vram_4bit": 2,
-        "min_vram_fp16": 4,
-        "description": "Pythia 1.4B — Apache 2.0, no gating. Rock-solid GPT-NeoX architecture, works everywhere.",
-        "tag": "1.4B",
-    },
-    # ── 2–4B ──────────────────────────────────────────────────────────────────
-    {
-        "id": "microsoft/phi-2",
-        "params_b": 2.7,
+        "id": "Qwen/Qwen3.5-2B",
+        "params_b": 2.27,
         "min_vram_4bit": 2,
         "min_vram_fp16": 6,
-        "description": "Microsoft Phi-2 — MIT license, no gating. Trained on high-quality textbook data. Strong reasoning for its size.",
-        "tag": "2.7B",
-    },
-    {
-        "id": "microsoft/Phi-3.5-mini-instruct",
-        "params_b": 3.8,
-        "min_vram_4bit": 3,
-        "min_vram_fp16": 8,
-        "description": "Microsoft Phi-3.5-mini — MIT license, no gating. 128K context, outperforms many 7B models. Great for fine-tuning.",
-        "tag": "3.8B",
+        "description": "Qwen3.5 2B — Apache 2.0, no gating. Strong for 4–6 GB cards.",
+        "tag": "2B",
     },
     {
         "id": "Qwen/Qwen2.5-3B",
@@ -261,20 +250,36 @@ MODEL_CATALOG = [
         "tag": "3B",
     },
     {
-        "id": "Qwen/Qwen3-4B",
-        "params_b": 4,
-        "min_vram_4bit": 3,
-        "min_vram_fp16": 9,
-        "description": "Qwen3 4B — Apache 2.0, no gating. Excellent quality at 4B; outperforms many older 7B models.",
-        "tag": "4B",
-    },
-    {
         "id": "HuggingFaceTB/SmolLM3-3B",
         "params_b": 3,
         "min_vram_4bit": 3,
         "min_vram_fp16": 8,
         "description": "SmolLM3 3B — Apache 2.0, no gating. Fully open data + training recipe; long-context reasoner, punches above its weight.",
         "tag": "3B",
+    },
+    {
+        "id": "microsoft/Phi-3.5-mini-instruct",
+        "params_b": 3.8,
+        "min_vram_4bit": 3,
+        "min_vram_fp16": 8,
+        "description": "Microsoft Phi-3.5-mini — MIT license, no gating. 128K context, outperforms many 7B models. Great for fine-tuning.",
+        "tag": "3.8B",
+    },
+    {
+        "id": "microsoft/Phi-4-mini-instruct",
+        "params_b": 3.84,
+        "min_vram_4bit": 3,
+        "min_vram_fp16": 9,
+        "description": "Microsoft Phi-4-mini — MIT license, no gating. Strong reasoning for 3.8B; successor to Phi-3.5-mini.",
+        "tag": "3.8B",
+    },
+    {
+        "id": "Qwen/Qwen3-4B",
+        "params_b": 4,
+        "min_vram_4bit": 3,
+        "min_vram_fp16": 9,
+        "description": "Qwen3 4B — Apache 2.0, no gating. Excellent quality at 4B; outperforms many older 7B models.",
+        "tag": "4B",
     },
     {
         "id": "Qwen/Qwen3.5-4B",
@@ -284,7 +289,14 @@ MODEL_CATALOG = [
         "description": "Qwen3.5 4B — Apache 2.0, no gating. Newer generation than Qwen3-4B.",
         "tag": "4B ⭐",
     },
-    # ── 7–9B ──────────────────────────────────────────────────────────────────
+    {
+        "id": "google/gemma-4-E2B",
+        "params_b": 5.12,
+        "min_vram_4bit": 4,
+        "min_vram_fp16": 12,
+        "description": "Gemma 4 E2B — Apache 2.0, no gating (unlike Gemma 3). Experimental: multimodal architecture.",
+        "tag": "E2B 🧪",
+    },
     {
         "id": "Qwen/Qwen2.5-7B",
         "params_b": 7,
@@ -292,14 +304,6 @@ MODEL_CATALOG = [
         "min_vram_fp16": 15,
         "description": "Qwen 2.5 7B — recommended for 8–16 GB VRAM. Excellent quality with 4-bit QLoRA.",
         "tag": "7B ⭐",
-    },
-    {
-        "id": "Qwen/Qwen3-8B",
-        "params_b": 8,
-        "min_vram_4bit": 5,
-        "min_vram_fp16": 17,
-        "description": "Qwen3 8B — Apache 2.0, no gating. Latest Qwen generation; strong reasoning and instruction following.",
-        "tag": "8B ⭐",
     },
     {
         "id": "allenai/OLMo-2-1124-7B",
@@ -318,20 +322,36 @@ MODEL_CATALOG = [
         "tag": "7B",
     },
     {
-        "id": "mistralai/Mistral-7B-v0.1",
-        "params_b": 7,
+        "id": "allenai/Olmo-3-7B-Instruct",
+        "params_b": 7.3,
         "min_vram_4bit": 5,
-        "min_vram_fp16": 15,
-        "description": "Mistral 7B v0.1 — Apache 2.0, no gating. Original release; well-tested for fine-tuning.",
+        "min_vram_fp16": 16,
+        "description": "OLMo 3 7B Instruct — Apache 2.0, no gating, fully open (data + code). Successor to OLMo 2.",
         "tag": "7B",
     },
     {
-        "id": "EleutherAI/pythia-6.9b",
-        "params_b": 6.9,
+        "id": "Qwen/Qwen3-8B",
+        "params_b": 8,
         "min_vram_4bit": 5,
-        "min_vram_fp16": 15,
-        "description": "Pythia 6.9B — Apache 2.0, no gating. Standard GPT-NeoX architecture, very reliable for fine-tuning.",
-        "tag": "6.9B",
+        "min_vram_fp16": 17,
+        "description": "Qwen3 8B — Apache 2.0, no gating. Latest Qwen generation; strong reasoning and instruction following.",
+        "tag": "8B ⭐",
+    },
+    {
+        "id": "google/gemma-4-E4B",
+        "params_b": 8.0,
+        "min_vram_4bit": 5,
+        "min_vram_fp16": 18,
+        "description": "Gemma 4 E4B — Apache 2.0, no gating. Experimental: multimodal architecture.",
+        "tag": "E4B 🧪",
+    },
+    {
+        "id": "mistralai/Ministral-3-8B-Instruct-2512",
+        "params_b": 8.92,
+        "min_vram_4bit": 6,
+        "min_vram_fp16": 19,
+        "description": "Ministral 3 8B Instruct — Apache 2.0, no gating. Experimental: multimodal architecture.",
+        "tag": "8B 🧪",
     },
     {
         "id": "Qwen/Qwen3.5-9B",
@@ -341,7 +361,14 @@ MODEL_CATALOG = [
         "description": "Qwen3.5 9B — Apache 2.0, no gating. Newer generation; fills the gap between 8B and 13B nicely.",
         "tag": "9B",
     },
-    # ── 13–14B ────────────────────────────────────────────────────────────────
+    {
+        "id": "google/gemma-4-12B",
+        "params_b": 11.96,
+        "min_vram_4bit": 8,
+        "min_vram_fp16": 26,
+        "description": "Gemma 4 12B — Apache 2.0, no gating. Experimental: multimodal architecture.",
+        "tag": "12B 🧪",
+    },
     {
         "id": "allenai/OLMo-2-1124-13B",
         "params_b": 13,
@@ -366,7 +393,6 @@ MODEL_CATALOG = [
         "description": "Qwen3 14B — Apache 2.0, no gating. Latest generation; strong reasoning, coding, and multilingual.",
         "tag": "14B",
     },
-    # ── 27B ───────────────────────────────────────────────────────────────────
     {
         "id": "Qwen/Qwen3.5-27B",
         "params_b": 27,
@@ -375,7 +401,22 @@ MODEL_CATALOG = [
         "description": "Qwen3.5 27B — Apache 2.0, no gating. Dense model; strong step up from 14B for 24+ GB cards, below the 32B tier.",
         "tag": "27B",
     },
-    # ── 32B ───────────────────────────────────────────────────────────────────
+    {
+        "id": "Qwen/Qwen3.6-27B",
+        "params_b": 27.8,
+        "min_vram_4bit": 17,
+        "min_vram_fp16": 57,
+        "description": "Qwen3.6 27B — Apache 2.0, no gating. Newest dense Qwen; for 24+ GB cards.",
+        "tag": "27B ⭐",
+    },
+    {
+        "id": "google/gemma-4-31B",
+        "params_b": 31.3,
+        "min_vram_4bit": 20,
+        "min_vram_fp16": 64,
+        "description": "Gemma 4 31B — Apache 2.0, no gating. Experimental; for 24+ GB cards.",
+        "tag": "31B 🧪",
+    },
     {
         "id": "Qwen/Qwen2.5-32B",
         "params_b": 32,
@@ -392,21 +433,12 @@ MODEL_CATALOG = [
         "description": "Qwen3 32B — Apache 2.0, no gating. Top open-source quality at 32B. Needs 24+ GB for 4-bit.",
         "tag": "32B",
     },
-    # ── 72B ───────────────────────────────────────────────────────────────────
     {
         "id": "Qwen/Qwen2.5-72B",
         "params_b": 72,
         "min_vram_4bit": 42,
         "min_vram_fp16": 145,
         "description": "Qwen 2.5 72B — top open-source quality. Multi-GPU or cloud only.",
-        "tag": "72B",
-    },
-    {
-        "id": "Qwen/Qwen3-72B",
-        "params_b": 72,
-        "min_vram_4bit": 42,
-        "min_vram_fp16": 145,
-        "description": "Qwen3 72B — Apache 2.0, no gating. State-of-the-art open model. Multi-GPU or cloud only.",
         "tag": "72B",
     },
 ]
@@ -923,6 +955,29 @@ def create_app():
 
     app = Flask(__name__, static_folder=TRAIN_DIR)
     CORS(app)
+
+    import hf_auth
+    hf_auth.load_token()   # export a saved token as HF_TOKEN for training subprocesses
+
+    @app.route("/hf-token", methods=["GET"])
+    def hf_token_status():
+        """Whether an (optional) Hugging Face token is saved. The token itself is never returned."""
+        return jsonify({"set": bool(hf_auth.load_token())})
+
+    @app.route("/hf-token", methods=["POST"])
+    def hf_token_save():
+        """Save or clear (empty string) the optional Hugging Face token for gated models."""
+        hf_auth.save_token((request.get_json(silent=True) or {}).get("token", ""))
+        return jsonify({"ok": True, "set": bool(hf_auth.load_token())})
+
+    @app.route("/check-model", methods=["POST"])
+    def check_model_access():
+        """Validate a custom model ID / local folder and explain gating problems."""
+        mid = ((request.get_json(silent=True) or {}).get("model_id") or "").strip()
+        if not mid:
+            return jsonify({"ok": False, "message": "Enter a model ID or folder path."})
+        ok, msg = hf_auth.check_model(mid)
+        return jsonify({"ok": ok, "message": msg})
 
     @app.route("/")
     def index():

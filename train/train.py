@@ -652,6 +652,34 @@ def make_text_dataset(raw_dataset, fmt, tokenizer):
         )
 
 
+def _estimate_params_b(model_id):
+    """Parameter count in billions: local safetensors headers / Hub metadata, then name, then 7."""
+    import json as _j, struct as _st, glob as _g
+    try:
+        if os.path.isdir(model_id):
+            total = 0
+            for f in _g.glob(os.path.join(model_id, "*.safetensors")):
+                with open(f, "rb") as fh:
+                    hdr = _j.loads(fh.read(_st.unpack("<Q", fh.read(8))[0]))
+                for k, v in hdr.items():
+                    if k != "__metadata__" and v.get("dtype") in ("F16", "BF16", "F32"):
+                        n = 1
+                        for d in v["shape"]:
+                            n *= d
+                        total += n
+            if total:
+                return total / 1e9
+        else:
+            from huggingface_hub import model_info
+            st = getattr(model_info(model_id), "safetensors", None)
+            if st and getattr(st, "total", 0):
+                return st.total / 1e9
+    except Exception:
+        pass
+    m = _re.findall(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", os.path.basename(model_id.rstrip("/\\")).lower().replace("-", " ").replace("_", " "))
+    return float(m[-1]) if m else 7.0
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -931,28 +959,7 @@ def main():
         except Exception:
             vram_gb = 0
 
-    # Estimate model parameter count from base model name (rough heuristic)
-    _bm_lower = BASE_MODEL.lower()
-    if any(x in _bm_lower for x in ["72b", "70b"]):
-        model_params_b = 70
-    elif any(x in _bm_lower for x in ["32b", "30b"]):
-        model_params_b = 32
-    elif any(x in _bm_lower for x in ["14b"]):
-        model_params_b = 14
-    elif any(x in _bm_lower for x in ["13b", "12b"]):
-        model_params_b = 13
-    elif any(x in _bm_lower for x in ["8b", "9b"]):
-        model_params_b = 8
-    elif any(x in _bm_lower for x in ["7b"]):
-        model_params_b = 7
-    elif any(x in _bm_lower for x in ["3b"]):
-        model_params_b = 3
-    elif any(x in _bm_lower for x in ["1.5b", "1b"]):
-        model_params_b = 1
-    elif any(x in _bm_lower for x in ["0.5b"]):
-        model_params_b = 0.5
-    else:
-        model_params_b = 7  # default assumption
+    model_params_b = _estimate_params_b(BASE_MODEL)
 
     # Rough VRAM needed for 4-bit weights (bytes_per_param ≈ 0.5 for nf4 + overhead)
     # Rule of thumb: model_gb_4bit ≈ model_params_b * 0.6
@@ -966,15 +973,16 @@ def main():
     _user_set_accum = "--grad_accum" in sys.argv
 
     if not _user_set_batch:
-        if vram_gb >= 40:
+        # Scale the micro-batch with VRAM left after the weights (not total VRAM), so a
+        # 32 GB card running a 27B model isn't treated like a 32 GB card running a 3B.
+        _free = vram_gb - (model_vram_4bit if use_4bit else model_vram_fp16)
+        if _free >= 60:      # 80-96 GB class (RTX PRO 6000 etc.)
+            args.batch = 8
+        elif _free >= 24:    # 32-48 GB class (RTX 5090, A6000...)
             args.batch = 4
-        elif vram_gb >= 24:
+        elif _free >= 10:    # 16-24 GB class
             args.batch = 2
-        elif vram_gb >= 16:
-            args.batch = 2
-        elif vram_gb >= 10:
-            args.batch = 1
-        else:
+        else:                # 8-12 GB class or tight fit
             args.batch = 1
 
     if not _user_set_accum:
@@ -1096,15 +1104,12 @@ def main():
 
     # ── 1. Validate model exists on HuggingFace ───────────────────────────────
     print(f"[train] Checking model exists: {BASE_MODEL}")
-    try:
-        from huggingface_hub import model_info
-        model_info(BASE_MODEL)
-        print(f"[train] Model found ✓")
-    except Exception:
-        print(f"\n[train] ERROR: Model '{BASE_MODEL}' was not found on HuggingFace.")
-        print(f"[train] The model ID you specified in config.json does not exist.")
-        print(f"[train] Check the exact model ID at: https://huggingface.co/models")
-        print(f"[train] Then update 'base_model' in config.json and try again.")
+    from hf_auth import check_model
+    _ok, _msg = check_model(BASE_MODEL)
+    if _ok:
+        print(f"[train] Model: {_msg}")
+    else:
+        print(f"\n[train] ERROR: {_msg}")
         _restore_sleep()
         sys.exit(1)
 

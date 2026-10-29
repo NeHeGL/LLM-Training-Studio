@@ -69,3 +69,4 @@ desktop-view/__pycache__/
 .DS_Store
 Thumbs.db
 .git_disabled/
+.hf_token
