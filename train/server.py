@@ -1,7 +1,6 @@
 """
 LLM Training Studio - Server (NeHe Productions)
 Author: Jeff Molofee (aka NeHe) — 2026
-AI Assistance: Cline (Claude Sonnet 4.5)
 
 Serves studio.html and provides API to manage training examples + build dataset files.
 
