@@ -27,6 +27,8 @@ GGUF types (default: q4_k_m — override with --gguf-type):
                      Two-step: SafeTensors → f16 GGUF → q4_k_m. llama-quantize installed by install.bat.
     iq4_xs  ~3.6 GB Smaller than q4_k_m. Add --imatrix (or it's implied) to calibrate quality against
                      the model's own training data — closes most of the gap vs q4_k_m at a smaller size.
+    q5_k_m  ~5 GB   A step up from q4_k_m: very close to the original. Two-step like q4_k_m.
+    q6_k    ~6 GB   Practically indistinguishable from the original; between q5_k_m and q8_0.
     q8_0    ~8 GB   Near-lossless quality. Single-step, no extra tools. Only if you need near-lossless.
     f16     ~14 GB  Lossless, full precision. Needs 16+ GB VRAM headroom just to load for inference.
     q4_0    ~4 GB   Fastest inference, lowest quality. Use only if speed is critical.
@@ -866,6 +868,13 @@ def _generate_imatrix(f16_gguf_path):
     return None
 
 
+def _ensure_converter_patch(script_path):
+    """Re-apply our small additive fix to a (re)downloaded convert_hf_to_gguf.py."""
+    from converter_patch import ensure_patch
+    if ensure_patch(script_path):
+        print("[export] Applied config-loader patch to convert_hf_to_gguf.py")
+
+
 def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0", use_imatrix=False):
     """
     Convert a HuggingFace SafeTensors model directory to a single GGUF file
@@ -912,6 +921,8 @@ def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0", use_imatrix
             print(f"[export] ⚠ Could not download {script_name}: {e}")
             return None
 
+    _ensure_converter_patch(convert_script)
+
     # ── Run the conversion ────────────────────────────────────────────────────
     # convert_hf_to_gguf.py only supports: f32, f16, bf16, q8_0, tq1_0, tq2_0, auto
     # Types like q4_k_m and q4_0 require a two-step process:
@@ -929,12 +940,16 @@ def _convert_to_gguf(hf_model_dir, output_path, quantization="q8_0", use_imatrix
         "auto":   "auto",
         # These require llama-quantize post-processing:
         "q4_k_m": "f16",
+        "q5_k_m": "f16",
+        "q6_k":   "f16",
         "q4_0":   "f16",
         "iq4_xs": "f16",
     }
     # llama-quantize type strings
     _QUANTIZE_TYPE = {
         "q4_k_m": "Q4_K_M",
+        "q5_k_m": "Q5_K_M",
+        "q6_k":   "Q6_K",
         "q4_0":   "Q4_0",
         "iq4_xs": "IQ4_XS",
     }
@@ -1378,11 +1393,11 @@ def main():
                         "Only needed if you want to use chat_test/server.py (the Python chat tester). "
                         "By default they are deleted after GGUF conversion to save ~15 GB.")
     p.add_argument("--gguf-type",        dest="gguf_type", default=None,
-                   choices=["f16", "q8_0", "q4_k_m", "q4_0", "iq4_xs", "auto"],
+                   choices=["f16", "q8_0", "q6_k", "q5_k_m", "q4_k_m", "q4_0", "iq4_xs", "auto"],
                    help="GGUF quantization type (default: q4_k_m — a fixed, portable choice for sharing "
                         "with others on unknown hardware). "
                         "f16=lossless ~14 GB (16+ GB VRAM); q8_0=near-lossless ~8 GB (8-16 GB VRAM); "
-                        "q4_k_m=good quality ~4 GB (4-8 GB VRAM); q4_0=smallest ~4 GB (CPU/low VRAM); "
+                        "q6_k=~6 GB, q5_k_m=~5 GB (quality steps between q8_0 and q4_k_m); q4_k_m=good quality ~4 GB (4-8 GB VRAM); q4_0=smallest ~4 GB (CPU/low VRAM); "
                         "iq4_xs=smaller than q4_k_m, imatrix-calibrated (implies --imatrix); "
                         "auto=pick the best type for the DETECTED LOCAL GPU's VRAM (use when testing "
                         "on this same machine, not when exporting to share)")
@@ -1422,7 +1437,7 @@ def main():
         print(f"[export]   Two-step conversion: SafeTensors → f16 GGUF → q4_k_m GGUF")
         print(f"[export]   (llama-quantize installed by install.bat — no extra setup needed)")
     elif args.gguf_type is not None:
-        if args.gguf_type in ("q4_k_m", "q4_0", "iq4_xs"):
+        if args.gguf_type in ("q4_k_m", "q5_k_m", "q6_k", "q4_0", "iq4_xs"):
             print(f"[export] GGUF type (manual)      : {args.gguf_type}")
             print(f"[export]   Two-step conversion: SafeTensors → f16 GGUF → {args.gguf_type} GGUF")
         else:
@@ -1531,6 +1546,8 @@ def main():
     tok_path = lora_dir if os.path.exists(os.path.join(lora_dir, "tokenizer_config.json")) else BASE_MODEL
     print(f"[export] Loading tokenizer from: {tok_path}")
     tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=_needs_remote_code(BASE_MODEL))
+    from chat_format import prepare_tokenizer
+    prepare_tokenizer(tokenizer)
 
     # Load the system prompt from config so it can be baked into the chat template.
     # This is the correct way to embed identity — convert_hf_to_gguf.py reads the
@@ -1780,6 +1797,30 @@ def main():
                     _jtk.dump(_tcfg, _f, indent=2, ensure_ascii=False)
         except Exception as _e:
             print(f"[export] (could not restore tokenizer_class: {_e})")
+        # Same problem for config.json: transformers 5 re-serializes it in a new layout
+        # (e.g. Gemma 4 loses text_config.global_head_dim) that convert_hf_to_gguf.py
+        # can't read. LoRA never changes the architecture, so put the base model's
+        # original config back, keeping only the merged model's vocab_size in case the
+        # embeddings were resized.
+        try:
+            import json as _jcf
+            from huggingface_hub import hf_hub_download as _hfd2
+            _cfg_p = os.path.join(export_dir, "config.json")
+            _base_p = (os.path.join(BASE_MODEL, "config.json") if os.path.isdir(BASE_MODEL)
+                       else _hfd2(BASE_MODEL, "config.json"))
+            with open(_base_p, encoding="utf-8") as _f:
+                _bcfg = _jcf.load(_f)
+            with open(_cfg_p, encoding="utf-8") as _f:
+                _ecfg = _jcf.load(_f)
+            def _vs(c):
+                return c.get("vocab_size") if "vocab_size" in c else (c.get("text_config") or {}).get("vocab_size")
+            _ev = _vs(_ecfg)
+            if _ev and _vs(_bcfg) != _ev:
+                (_bcfg if "vocab_size" in _bcfg else _bcfg.setdefault("text_config", {}))["vocab_size"] = _ev
+            with open(_cfg_p, "w", encoding="utf-8") as _f:
+                _jcf.dump(_bcfg, _f, indent=2, ensure_ascii=False)
+        except Exception as _e:
+            print(f"[export] (could not restore original config.json: {_e})")
         print(f"[export] Model saved ✓", flush=True)
 
         # ── Write a corrected generation_config.json ──────────────────────────

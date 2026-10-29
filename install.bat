@@ -52,81 +52,25 @@ if errorlevel 1 (
 )
 echo  [OK] pip up to date
 
-:: -- Detect CUDA version via nvidia-smi -----------------------
+:: -- Pick the right PyTorch build for this GPU ----------------
+:: tools\select_torch.ps1 looks at the card's compute capability and the
+:: driver's CUDA version (see that file for the rules).
 echo.
 echo  [2/5] Detecting GPU / CUDA version...
-
-set CUDA_VER=
-set TORCH_INDEX=
-set GPU_NAME=
-
-nvidia-smi --query-gpu=name --format=csv,noheader >nul 2>&1
-if errorlevel 1 (
+set "GPU_NAME=" & set "CUDA_VER=" & set "GPU_TAG=" & set "TORCH_INDEX=" & set "TORCH_SPEC=" & set "ERROR="
+for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\select_torch.ps1"`) do set "%%a=%%b"
+if defined ERROR (
+    echo.
+    echo  [ERROR] !ERROR!
+    pause
+    exit /b 1
+)
+if "!GPU_TAG!"=="cpu" (
     echo  [INFO] No NVIDIA GPU detected - will install CPU-only PyTorch.
-    set TORCH_INDEX=https://download.pytorch.org/whl/cpu
-    set GPU_TAG=cpu
-    goto :install_torch
-)
-
-:: GPU detected - get name
-for /f "tokens=*" %%g in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
-    set _TMP=%%g
-    echo !_TMP! | findstr /i "ERROR" >nul || (set GPU_NAME=%%g & goto :got_gpu)
-)
-:: Fallback: parse GPU name from nvidia-smi plain text
-for /f "tokens=*" %%g in ('nvidia-smi 2^>nul ^| findstr /i "GeForce\|Quadro\|RTX\|GTX\|Tesla\|A100\|H100"') do (
-    set GPU_NAME=%%g
-    goto :got_gpu
-)
-set GPU_NAME=NVIDIA GPU (detected)
-:got_gpu
-echo  [OK] GPU: !GPU_NAME!
-
-:: Get CUDA version from nvidia-smi (e.g. "CUDA Version: 12.8")
-for /f "tokens=3" %%c in ('nvidia-smi 2^>nul ^| findstr /i "CUDA Version"') do (
-    set CUDA_VER=%%c
-    goto :got_cuda
-)
-:got_cuda
-
-if "!CUDA_VER!"=="" (
-    echo  [WARN] Could not read CUDA version - defaulting to cu121
-    set TORCH_INDEX=https://download.pytorch.org/whl/cu121
-    set GPU_TAG=cu121
-    goto :install_torch
-)
-
-echo  [OK] CUDA Version: !CUDA_VER!
-
-:: Parse major/minor version
-for /f "tokens=1,2 delims=." %%m in ("!CUDA_VER!") do (
-    set CUDA_MAJOR=%%m
-    set CUDA_MINOR=%%n
-)
-
-:: Map CUDA version to PyTorch index URL
-set GPU_TAG=cu128
-set TORCH_INDEX=https://download.pytorch.org/whl/cu128
-
-if !CUDA_MAJOR! LSS 12 (
-    set GPU_TAG=cu118
-    set TORCH_INDEX=https://download.pytorch.org/whl/cu118
-    goto :install_torch
-)
-if !CUDA_MINOR! LSS 1 (
-    set GPU_TAG=cu118
-    set TORCH_INDEX=https://download.pytorch.org/whl/cu118
-    goto :install_torch
-)
-if !CUDA_MINOR! LSS 4 (
-    set GPU_TAG=cu121
-    set TORCH_INDEX=https://download.pytorch.org/whl/cu121
-    goto :install_torch
-)
-if !CUDA_MINOR! LSS 8 (
-    set GPU_TAG=cu124
-    set TORCH_INDEX=https://download.pytorch.org/whl/cu124
-    goto :install_torch
+    echo         Training on a CPU is extremely slow; an NVIDIA GPU is strongly recommended.
+) else (
+    echo  [OK] GPU: !GPU_NAME!
+    echo  [OK] Driver supports CUDA !CUDA_VER! - using PyTorch build !GPU_TAG!
 )
 
 :install_torch
@@ -134,7 +78,7 @@ echo.
 echo  [3/5] Installing PyTorch (%GPU_TAG%)...
 echo        Index URL: !TORCH_INDEX!
 echo.
-%PIP% install torch torchvision torchaudio --index-url !TORCH_INDEX!
+%PIP% install !TORCH_SPEC! --index-url !TORCH_INDEX!
 if errorlevel 1 (
     echo.
     echo  [ERROR] PyTorch install failed.
@@ -144,6 +88,10 @@ if errorlevel 1 (
 )
 echo.
 echo  [OK] PyTorch installed
+%PYTHON% "%~dp0tools\check_torch.py"
+if errorlevel 1 (
+    echo  [WARN] The GPU check above failed - training may not work until this is fixed.
+)
 
 :: -- Install requirements.txt ---------------------------------
 echo.

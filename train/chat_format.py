@@ -116,3 +116,33 @@ def ollama_template(tokenizer):
             "{{ .Content }}<turn|>\n{{ end }}<|turn>model\n" + suffix
         ), ["<turn|>"]
     return None, []
+
+
+# Gemma 4 E2B/E4B templates, unlike the 12B+ one, do not close an empty "thought" channel in the
+# generation prompt when thinking is off, so those models open a thinking block anyway and burn the
+# reply budget on it. Make them behave like the larger ones. Exact, narrow match; any other
+# template is returned untouched.
+_BS = chr(92)   # a literal backslash: Jinja source contains the two characters \ and n, not a newline
+_G4_OLD = ("{{- '<|turn>model" + _BS + "n' -}}\n"
+           "    {%- elif ns.prev_message_type == 'tool_response' and enable_thinking -%}")
+_G4_NEW = ("{{- '<|turn>model" + _BS + "n' -}}\n"
+           "        {%- if not enable_thinking -%}\n"
+           "            {{- '<|channel>thought" + _BS + "n<channel|>' -}}\n"
+           "        {%- endif -%}\n"
+           "    {%- elif ns.prev_message_type == 'tool_response' and enable_thinking -%}")
+
+
+def normalize_template(template):
+    """Return `template` with known per-family fixes applied (idempotent)."""
+    if isinstance(template, str) and _G4_OLD in template and "<|channel>thought" in template:
+        return template.replace(_G4_OLD, _G4_NEW, 1)
+    return template
+
+
+def prepare_tokenizer(tokenizer):
+    """Apply normalize_template() to a tokenizer's chat template in place."""
+    tpl = getattr(tokenizer, "chat_template", None)
+    new = normalize_template(tpl)
+    if new is not tpl and new != tpl:
+        tokenizer.chat_template = new
+    return tokenizer

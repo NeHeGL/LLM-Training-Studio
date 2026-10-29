@@ -115,11 +115,17 @@
                 <option value="auto">Auto (recommended)</option>
                 <option value="f16">f16 — lossless, ~14 GB</option>
                 <option value="q8_0">q8_0 — near-lossless, ~8 GB</option>
+                <option value="q6_k">q6_k — nearly lossless, ~6 GB</option>
+                <option value="q5_k_m">q5_k_m — very high quality, ~5 GB</option>
                 <option value="q4_k_m">q4_k_m — good quality, ~4 GB</option>
                 <option value="iq4_xs">iq4_xs — imatrix-calibrated, ~3.6 GB</option>
                 <option value="q4_0">q4_0 — smallest, ~4 GB</option>
               </select>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:0 2px;font-size:0.72rem;color:#94a3b8;">
+              <input type="checkbox" id="export-imatrix" style="width:13px;height:13px;accent-color:#38bdf8;flex-shrink:0;">
+              <span>Better quality (slower export) <span style="color:#6b7fa0;">&mdash; calibrates the 4/5/6-bit files on your training data. iq4_xs always does this.</span></span>
+            </label>
             <div id="export-gguf-hint" style="font-size:0.68rem;color:#6b7fa0;line-height:1.4;padding:0 2px;"></div>
             <div id="export-result-bar" style="display:none;padding:5px 8px;border-radius:5px;font-size:0.72rem;"></div>
           </div>
@@ -293,8 +299,8 @@
               <div id="ts-vram-estimate" style="font-size:0.82rem;color:#94a3b8;margin-top:2px;"></div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <label style="color:#94a3b8;">Epochs</label>
-              <input id="ts-epochs" type="number" min="1" max="20" value="3" onchange="_debouncedSaveTraining()" oninput="_debouncedSaveTraining()" style="width:60px;background:#0d1520;border:1px solid #1e2a3a;border-radius:4px;padding:2px 6px;font-size:0.82rem;color:#e2e8f0;font-family:inherit;outline:none;text-align:right;">
+              <label style="color:#94a3b8;" title="Leave blank for Auto: small datasets get more epochs so the model really learns your facts.">Epochs</label>
+              <input id="ts-epochs" type="number" min="1" max="30" value="" placeholder="auto" onchange="_debouncedSaveTraining()" oninput="_debouncedSaveTraining()" style="width:60px;background:#0d1520;border:1px solid #1e2a3a;border-radius:4px;padding:2px 6px;font-size:0.82rem;color:#e2e8f0;font-family:inherit;outline:none;text-align:right;">
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <label style="color:#94a3b8;">Batch size</label>
@@ -1379,7 +1385,7 @@ async function saveTrainingSettings() {
   if (!_activeModel) { toast('No active model', 'error'); return; }
   const settings = {
     quant:      document.getElementById('ts-quant').value,
-    epochs:     parseInt(document.getElementById('ts-epochs').value) || 3,
+    epochs:     parseInt(document.getElementById('ts-epochs').value) || 0,   // 0 = auto
     batch:      parseInt(document.getElementById('ts-batch').value)  || 2,
     lr:         document.getElementById('ts-lr').value.trim() || '1e-4',
     lora_r:     parseInt(document.getElementById('ts-lora-r').value) || 16,
@@ -1450,7 +1456,7 @@ function updateVramEstimate() {
 function _applyTrainingSettings(ts) {
   if (!ts) return;
   if (ts.quant)              document.getElementById('ts-quant').value      = ts.quant;
-  if (ts.epochs)             document.getElementById('ts-epochs').value     = ts.epochs;
+  document.getElementById('ts-epochs').value = ts.epochs ? ts.epochs : '';   // blank = auto
   if (ts.batch)              document.getElementById('ts-batch').value      = ts.batch;
   if (ts.lr)                 document.getElementById('ts-lr').value         = ts.lr;
   if (ts.lora_r)             document.getElementById('ts-lora-r').value     = ts.lora_r;
@@ -1616,8 +1622,10 @@ function _buildCatalogDropdown(data) {
 
   // Update notes and sync the hidden input to the effective value
   if (savedInCatalog) {
-    // Saved value is valid — show its notes
+    // Saved value is valid — show its notes (and refresh the VRAM estimate, which may have
+    // been computed earlier, before the saved base model was known)
     _showCatalogNotes(savedInCatalog);
+    updateVramEstimate();
   } else if (effectiveVal) {
     // No saved value (or stale) — auto-select recommended without saving to server
     _autoSelectRecommendedModel(effectiveVal);
@@ -2373,6 +2381,8 @@ function _updateExportHint() {
   const typeLabels = {
     f16:    'f16 (lossless, ~14gb)',
     q8_0:   'q8_0 (near-lossless, ~8gb)',
+    q6_k:   'q6_k (nearly lossless, ~6gb)',
+    q5_k_m: 'q5_k_m (very high quality, ~5gb)',
     q4_k_m: 'q4_k_m (good quality, ~4gb)',
     iq4_xs: 'iq4_xs (imatrix-calibrated, ~3.6gb)',
     q4_0:   'q4_0 (smallest, ~4gb)',
@@ -2482,6 +2492,8 @@ function openGenerateConsole(btn) {
 
   // Build stream URL — GGUF only, SafeTensors always deleted (chat server uses GGUF directly)
   const streamParams = new URLSearchParams({ gguf_type: ggufType });
+  const _imEl = document.getElementById('export-imatrix');
+  if (_imEl && _imEl.checked) streamParams.set('imatrix', '1');
   _generateEvtSource = new EventSource(API + '/run/generate/stream?' + streamParams.toString());
 
   // Show what's being exported
@@ -2501,8 +2513,9 @@ function openGenerateConsole(btn) {
   // auto_gguf_type in /model-catalog — same value _updateExportHint() uses).
   const _resolvedGgufType = ggufType !== 'auto' ? ggufType :
     ((_catalogData && _catalogData.auto_gguf_type) || 'q4_k_m');
-  const _isImatrix = (_resolvedGgufType === 'iq4_xs');
-  const _isTwoStep = (_resolvedGgufType === 'q4_k_m' || _resolvedGgufType === 'q4_0' || _isImatrix);
+  const _wantIm = !!(document.getElementById('export-imatrix') || {}).checked;
+  const _isImatrix = (_resolvedGgufType === 'iq4_xs' || (_wantIm && ['q4_k_m','q5_k_m','q6_k','q4_0'].includes(_resolvedGgufType)));
+  const _isTwoStep = (['q4_k_m','q5_k_m','q6_k','q4_0'].includes(_resolvedGgufType) || _isImatrix);
   let _gcPhase = 0;  // 0=connecting, 1=merging, 2=saving, 3=converting/f16, 4=imatrix(iq4_xs only), 5=quantizing, 6=registering
 
   let _gcExportFolder = '';  // populated when generate_llm.py prints the Watch line

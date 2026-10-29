@@ -1367,7 +1367,7 @@ def create_app():
             if isinstance(ts, dict):
                 m["train_settings"] = {
                     "quant":   str(ts.get("quant", "4bit")),
-                    "epochs":  int(ts.get("epochs", 3)),
+                    "epochs":  int(ts.get("epochs", 0) or 0),   # 0 = automatic
                     "batch":   int(ts.get("batch", 2)),
                     "lr":      str(ts.get("lr", "2e-4")),
                     "lora_r":  int(ts.get("lora_r", 16)),
@@ -1924,7 +1924,7 @@ def create_app():
             # Read saved train_settings from config and pass as CLI args
             _ts = get_active_model(load_config()).get("train_settings", {})
             _use_4bit = _ts.get("quant", "4bit") == "4bit"
-            _epochs   = str(_ts.get("epochs", 3))
+            _epochs   = int(_ts.get("epochs", 0) or 0)   # 0 = automatic (train.py picks it)
             _batch    = str(_ts.get("batch", 2))
             _lr       = str(_ts.get("lr", "2e-4"))
             _lora_r     = str(_ts.get("lora_r", 16))
@@ -1938,12 +1938,13 @@ def create_app():
             # The user can click "Fresh Start" in the UI to wipe checkpoints first.
             cmd = [sys.executable, "-X", "utf8", "-u",
                    os.path.join(TRAIN_DIR, "train.py"),
-                   "--epochs", _epochs,
                    "--batch",  _batch,
                    "--lr",     _lr,
                    "--lora-r", _lora_r,
                    "--max_seq_len", _seq_len,
             ]
+            if _epochs > 0:
+                cmd += ["--epochs", str(_epochs)]
             if not _use_4bit:
                 cmd.append("--no-4bit")
             if _eval_split:
@@ -2161,6 +2162,8 @@ def create_app():
             # plain default (q4_k_m — portable, for sharing with others).
             if gguf_type:
                 cmd += ["--gguf-type", gguf_type]
+            if request.args.get("imatrix") == "1":
+                cmd.append("--imatrix")   # calibrate q4/q5/q6 on the training data (iq4_xs always does)
             # Pass --keep-safetensors if requested
             if keep_safetensors == "1":
                 cmd.append("--keep-safetensors")

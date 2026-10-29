@@ -1,10 +1,20 @@
 # LLM Training Studio
 
-**2026 Jeff Molofee (NeHe)**
+**Teach an AI your own stuff, on your own PC.** No cloud, no accounts, no command line needed.
 
-**NeHe Productions** | Owner: Jeff Molofee (NeHe)  
-Fine-tune a local LLM on your own Q&A training data using LoRA / QLoRA.  
-Default base model: `Qwen/Qwen2.5-7B` (configurable per model in the Studio).
+Write down questions and answers about anything: your game world, your products, your family trivia, a personality you want. Click four buttons. Get a private model that answers the way you taught it, and chat with it in Ollama or LM Studio.
+
+- **Download and go.** Models download automatically the first time you train. Nothing to sign up for.
+- **Fits your GPU.** From an 8 GB card up to 96 GB, the Studio picks safe settings for you.
+- **One-file result.** Export a single `.gguf` you can share or run anywhere.
+- **See what's happening.** Live progress, a GPU monitor and a built-in chat tester.
+
+**How it works**
+
+1. **Add** your Q&A pairs (or drop in text files).
+2. **Build** the dataset.
+3. **Train** - watch it learn.
+4. **Export** the model and chat with it.
 
 <p align="center">
   <a href="app_image.jpg">
@@ -12,14 +22,13 @@ Default base model: `Qwen/Qwen2.5-7B` (configurable per model in the Studio).
   </a>
 </p>
 
-> **A note from the author:**  
-> This is a passion project — I love learning new things, and this was built to scratch that itch.  
-> It will contain bugs. It will contain mistakes. It may not be the best way to do things.  
-> I created it for myself to learn from, and shared it so others can learn from it too — and hopefully make it better.
+**[Quick start](#quick-start)** | **[Model catalog](#base-model-catalog)** | **[Changelog](CHANGELOG.md)**
 
-> **No HuggingFace account required.**  
-> All base models in the catalog are fully open — Apache 2.0, MIT, or Qwen license.  
-> Models download automatically the first time you train. No login, no gating, no token needed.
+**Guides:** [Writing good training data](docs/writing-good-training-data.md) | [Choosing a model and settings](docs/choosing-a-model-and-settings.md) | [Using your model in Ollama & LM Studio](docs/using-your-model.md) | [Troubleshooting](docs/troubleshooting.md)
+
+> **No Hugging Face account needed.** Every model in the catalog is openly licensed (Apache 2.0, MIT or Qwen license) and downloads on its own. Want a gated model like Llama? You can add one yourself - see [the catalog notes](#base-model-catalog).
+
+*2026 Jeff Molofee (NeHe) - NeHe Productions*
 
 ---
 
@@ -57,141 +66,6 @@ Run `install.bat` once. It will:
 > | 24–47 GB  | Qwen 14B                 | Full BF16/FP16 or 4-bit                     |
 > | 48+ GB    | Qwen 32B                 | Full precision, larger batch                |
 > | 96+ GB    | Qwen 72B                 | Multi-GPU recommended                       |
-
----
-
-## Full CLI Workflow (No UI)
-
-Every step that the Studio UI performs can also be run directly from the command line. The only step that requires the server is **Build Dataset** — but even that can be triggered headlessly via a one-line HTTP call.
-
-### CLI Step 1 — Start the server (headless, no browser)
-
-```
-python train/server.py --no-open
-```
-
-Starts the Studio server at http://localhost:5001 without opening a browser window. Required only for the dataset build step; you can Ctrl+C it after that.
-
----
-
-### CLI Step 2 — Build Dataset
-
-```
-python -c "import requests; r = requests.post('http://localhost:5001/build'); print(r.json())"
-```
-
-Reads all knowledge files for the active model, runs sanity checks, and writes `models/<ModelName>/dataset/train_chatml.jsonl` and `train_alpaca.jsonl`. Requires the server to be running (step 1 above). Once done, you can stop the server.
-
-To scan and preview your knowledge files without building:
-
-```
-python train/import_knowledge.py
-python train/import_knowledge.py --dry-run
-```
-
----
-
-### CLI Step 3 — Train
-
-```
-python train/train.py
-```
-
-Fine-tunes the LoRA adapter using the active model's dataset. All flags:
-
-| Flag                      | Default | Effect                                                        |
-|---------------------------|---------|---------------------------------------------------------------|
-| `--epochs N`              | 3       | Training passes over the dataset                              |
-| `--batch N`               | 2       | Per-device batch size (watch VRAM)                            |
-| `--grad_accum N`          | 4       | Gradient accumulation steps                                   |
-| `--lr FLOAT`              | 2e-4    | Learning rate                                                 |
-| `--max_seq_len N`         | 2048    | Maximum token sequence length                                 |
-| `--lora-r N`              | 16      | LoRA rank (auto-increased to 32 for models ≤1.5B)             |
-| `--lora-alpha N`          | 16      | LoRA alpha                                                    |
-| `--fmt chatml\|alpaca`    | chatml  | Dataset format                                                |
-| `--no-4bit`               | off     | Full FP16/BF16 — needs more VRAM                              |
-| `--grad-ckpt`             | auto    | Force gradient checkpointing ON (~3 GB savings, ~40% slower)  |
-| `--no-grad-ckpt`          | auto    | Force gradient checkpointing OFF                              |
-| `--low-mem`               | off     | Aggressive RAM saving (batch=1, seq=1024, grad-ckpt ON)       |
-| `--fresh`                 | off     | Wipe existing LoRA adapter + checkpoints and start fresh      |
-| `--resume PATH`           | auto    | Resume from a specific checkpoint directory                   |
-
-Examples:
-
-```
-# Typical run
-python train/train.py
-
-# More epochs, larger batch (24+ GB VRAM)
-python train/train.py --epochs 5 --batch 4
-
-# Low VRAM mode (6-8 GB cards)
-python train/train.py --low-mem
-
-# Start completely fresh (wipe old adapter)
-python train/train.py --fresh
-
-# Resume from a specific checkpoint
-python train/train.py --resume "models/TestAI/lora/testai-7.6b-qwen2.5/checkpoint-500"
-```
-
----
-
-### CLI Step 4 — Generate Model (export GGUF)
-
-```
-python train/generate_llm.py
-```
-
-Merges the LoRA adapter into the full base model and exports a `.gguf` file. All flags:
-
-| Flag                  | Default | Effect                                                                  |
-|-----------------------|---------|--------------------------------------------------------------------------|
-| `--gguf-type TYPE`    | q4_k_m  | GGUF quantization: `q4_k_m`, `q8_0`, `f16`, `q4_0`, `iq4_xs`, `auto`     |
-| `--imatrix`           | off     | Calibrate against this model's own training data (implied by `iq4_xs`)  |
-| `--no-gguf`           | off     | Skip GGUF — SafeTensors only (Ollama/LM Studio won't load it)           |
-| `--keep-safetensors`  | off     | Keep SafeTensors alongside the GGUF (saves ~15 GB by default)           |
-| `--no-bf16`           | off     | Force fp16 instead of bfloat16                                          |
-| `--lora PATH`         | auto    | Custom LoRA adapter directory                                           |
-| `--out PATH`          | auto    | Custom export destination                                               |
-
-The plain default (no `--gguf-type` at all) is always `q4_k_m` — fixed and portable, since the point of
-the default is a file that runs on hardware you don't control. `--gguf-type auto` is a separate, explicit
-opt-in: it detects **this machine's** VRAM and picks the best type for testing locally on the same GPU
-(24+ GB → q8_0, 12+ GB → q4_k_m, below that → iq4_xs) — don't use it for a file you intend to share,
-since a bigger GPU here doesn't help whoever you send it to.
-
-Examples:
-
-```
-# Default: portable q4_k_m, runs on any hardware
-python train/generate_llm.py
-
-# Auto-pick the best type for THIS machine's VRAM (for local testing, not sharing)
-python train/generate_llm.py --gguf-type auto
-
-# Export as q8_0 (near-lossless, ~8 GB)
-python train/generate_llm.py --gguf-type q8_0
-
-# Export as f16 (lossless, ~14 GB)
-python train/generate_llm.py --gguf-type f16
-
-# Export as iq4_xs — smaller than q4_k_m, imatrix-calibrated against the model's own training data
-python train/generate_llm.py --gguf-type iq4_xs
-
-# Keep SafeTensors files (needed for HuggingFace chat mode)
-python train/generate_llm.py --keep-safetensors
-```
-
----
-
-### CLI Step 5 — Test / Chat
-
-```
-python chat_test/server.py
-```
-
-Opens the chat UI at **http://localhost:5000**. No flags needed — auto-detects the best available model format (GGUF preferred, SafeTensors fallback).
 
 ---
 
@@ -248,12 +122,13 @@ Training takes ~1–4 hours on a GPU depending on dataset size and model.
 
 The script auto-detects your GPU and scales batch size, sequence length, and gradient checkpointing accordingly. It also prevents Windows from sleeping during training.
 
-**Training quality improvements (applied automatically):**
-- Learning rate `2e-4` and cosine LR schedule with 10% warmup — matches Axolotl/LLaMA-Factory standards
-- 5% validation split — held out from training to detect overfitting; eval loss reported at every checkpoint
-- Best checkpoint saved — trainer reloads the lowest eval-loss checkpoint at the end rather than the last one
-- NEFTune noise injection (alpha=5) — improves instruction-following quality at no extra compute cost
-- Small model auto-scaling — for models ≤1.5B, LoRA rank is auto-increased to r=32/alpha=64/dropout=0.1 to overcome base-model language bleeding
+**How training works (applied automatically):**
+- **Loss on answers only** - the model is scored on its replies, not on your system prompt or the question, so it learns *what to say* instead of parroting prompts.
+- **The model's own chat template** - every example is formatted exactly the way the base model was built to be prompted (Qwen, Gemma, Phi, Mistral, ...), and the exported model is prompted the same way. Thinking is switched off for models that have a thinking mode.
+- **Right LoRA layers for each model** - detected from the loaded model (including models with fused layers and vision-capable models, where only the text part is trained).
+- Learning rate `2e-4` with a cosine schedule and 10% warmup.
+- Small model auto-scaling - for models up to 1.5B, LoRA rank is raised to r=32/alpha=64/dropout=0.1.
+- Optional (Training Settings > Advanced): **rsLoRA**, **DoRA**, **NEFTune**, and a **5% validation split**. The validation split is off by default: it trains on 95% of your data, so about 5% of your facts would never be learned.
 
 **Checkpoint behaviour:**
 - Checkpoints (`checkpoint-N/` subdirs) are kept on disk after training completes — they are only removed when you press **Reset + Train** (or pass `--fresh`).
@@ -281,11 +156,15 @@ If Ollama is installed and running, the model is automatically registered.
 | Type     | Size    | Notes                                                                                                                      |
 |----------|---------|-----------------------------------------------------------------------------------------------------------------------------|
 | `q4_k_m` | ~4 GB   | **Default.** Best quality/size balance. Runs on any hardware. Requires `llama-quantize`.                                   |
+| `q5_k_m` | ~5 GB   | A step up: very close to the original model. Same two-step export as q4_k_m.                                               |
+| `q6_k`   | ~6 GB   | Practically indistinguishable from the original; between q5_k_m and q8_0.                                                  |
 | `iq4_xs` | ~3.6 GB | Smaller than q4_k_m. Calibrated against this model's own training data (`llama-imatrix`) to close most of the quality gap. |
 | `q8_0`   | ~8 GB   | Near-lossless. Single-step, no extra tools.                                                                                |
 | `f16`    | ~14 GB  | Lossless full precision. Needs 16+ GB VRAM to load for inference.                                                          |
 | `q4_0`   | ~4 GB   | Fastest inference, lowest quality.                                                                                         |
 | `auto`   | varies  | Picks q8_0/q4_k_m/iq4_xs based on **this machine's** detected VRAM — for local testing, not for sharing the file.          |
+
+**Better quality (slower export)** - tick this box next to *Format* (or pass `--imatrix`) to calibrate the 4/5/6-bit files on your own training data, the same trick `iq4_xs` always uses. Same file size, a little more accuracy.
 
 After export, the SafeTensors intermediate files used to build the GGUF are deleted to reclaim ~15 GB of disk space. Existing `.gguf` files for other quant types are never touched — exporting `q4_k_m` won't delete your existing `q8_0`. Pass `--keep-safetensors` to retain the SafeTensors files (needed for `chat_test/server.py` HuggingFace mode).
 
@@ -304,12 +183,14 @@ python chat_test/server.py
 Opens at **http://localhost:5000** — full chat UI to test the exported model.
 
 The chat server automatically detects the best available format:
-1. **GGUF** (`.gguf` file via `llama-cpp-python`) — preferred, fast, no Ollama needed
+1. **GGUF** (`.gguf` file via llama.cpp's `llama-server`, installed by `install.bat`) — preferred, no Ollama needed
 2. **SafeTensors** directory (via HuggingFace `transformers`) — requires more VRAM/RAM
 
 ---
 
 ## Adding Knowledge / Training Data
+
+> New to this? Read **[Writing good training data](docs/writing-good-training-data.md)** - how many pairs you need, how to phrase them, and what fine-tuning can and can't do.
 
 Training data lives in `models/<ModelName>/knowledge/`. Add files in Q:/A: text format:
 
@@ -454,69 +335,6 @@ The Studio shows live hardware utilization in the sidebar while training:
 
 ---
 
-## File Overview
-
-| File / Folder                       | Purpose                                                                          |
-|-------------------------------------|----------------------------------------------------------------------------------|
-| `start_web.bat`                     | Launch the Training Studio web server (port 5001)                                |
-| `start_app.bat`                     | Launch the PyQt6 desktop app (no console window)                                 |
-| `install.bat`                       | Install Python dependencies + PyTorch + llama-quantize                           |
-| `train/server.py`                   | Training Studio server (Flask)                                                   |
-| `train/studio.html`                 | Training Studio UI                                                               |
-| `train/studio.css`                  | Training Studio stylesheet                                                       |
-| `train/train.py`                    | LoRA fine-tuning script                                                          |
-| `train/generate_llm.py`             | Merges LoRA + exports GGUF model                                                 |
-| `train/import_knowledge.py`         | Parses training data files into Q&A pairs                                        |
-| `chat_test/server.py`               | Chat server — test your trained model (port 5000)                                |
-| `chat_test/chat.html`               | Chat UI                                                                          |
-| `models/<ModelName>/knowledge/`     | Source Q&A training data (txt files + manual entries)                            |
-| `models/<ModelName>/dataset/`       | Generated JSONL training files — created by Build Dataset                        |
-| `models/<ModelName>/lora/`          | Trained LoRA adapters — kept permanently as training artifacts                   |
-| `models/<ModelName>/gguf/`          | Exported GGUF model + Modelfile — load in Ollama or LM Studio                    |
-| `config.json`                       | Root index — active model name + list of all model names                         |
-| `requirements.txt`                  | Python dependencies                                                              |
-| `tools/install_llama_quantize.ps1`  | Download llama-quantize.exe from llama.cpp releases (called by `install.bat`)    |
-| `tools/convert_hf_to_gguf.py`       | Downloaded on demand — converts SafeTensors → GGUF                               |
-| `tools/llama/`                      | llama-quantize.exe and required DLLs (installed by `install.bat`)                |
-
----
-
-## Requirements
-
-Run `install.bat` — it handles everything automatically.
-
-To install manually:
-
-```
-# PyTorch (match your CUDA version — see https://pytorch.org/get-started/locally/):
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-
-# All other dependencies:
-pip install -r requirements.txt
-
-# GGUF chat support (optional — auto-installed on first use of chat server):
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu128
-```
-
-**Key dependencies:**
-
-| Package                        | Purpose                                                          |
-|--------------------------------|------------------------------------------------------------------|
-| `flask`, `flask-cors`          | Training Studio web server                                       |
-| `psutil`                       | CPU / RAM monitoring in the Studio                               |
-| `transformers`, `peft`, `trl`  | Model loading, LoRA fine-tuning                                  |
-| `accelerate`, `bitsandbytes`   | 4-bit QLoRA training                                             |
-| `datasets`                     | JSONL dataset loading                                            |
-| `sentencepiece`, `safetensors` | Tokenizer + model serialization                                  |
-| `huggingface_hub`              | Model validation + downloads                                     |
-| `gguf`                         | GGUF file conversion                                             |
-| `requests`, `tqdm`             | Utilities                                                        |
-| `torch`                        | GPU training (installed separately — CUDA version matters)       |
-| `llama-cpp-python`             | GGUF inference in chat server (auto-installed on demand)         |
-| `pynvml`                       | Optional — faster GPU monitoring (falls back to `nvidia-smi`)    |
-
----
-
 ## Using the Chat API
 
 The chat server runs as a local HTTP API:
@@ -547,90 +365,216 @@ If a model is responding with the wrong identity after re-training or updating i
 
 ---
 
-## Changelog
+## Full CLI Workflow (No UI)
 
-### 2026-08-12 — v1.1.0: iq4_xs + Importance-Matrix Quantization, Real VRAM-Aware Auto Export, Model Catalog Refresh
+Every step that the Studio UI performs can also be run directly from the command line. The only step that requires the server is **Build Dataset** — but even that can be triggered headlessly via a one-line HTTP call.
 
-**Files:** `train/generate_llm.py`, `train/server.py`, `train/studio.html`, `install.bat`, `README.md`
-
-**New GGUF export options:**
-
-1. **`iq4_xs` quant type** — smaller than `q4_k_m` (~3.6 GB vs ~4 GB). Automatically calibrated with an importance matrix generated by `llama-imatrix` (installed alongside `llama-quantize` by `install.bat`) against the model's own training dataset, closing most of the quality gap I-quants normally lose without calibration. A standalone `--imatrix` flag also lets other types (e.g. `q4_k_m`) opt into calibration.
-2. **`--gguf-type auto` now does real VRAM detection** instead of silently mapping to `q4_k_m`. It inspects the exporting machine's GPU (via the same `torch.cuda.get_device_properties()` used elsewhere in the Studio) and picks q8_0 (24+ GB), q4_k_m (12+ GB), or iq4_xs (below that) — meant for testing locally on the same GPU, not for a file you intend to share. The plain default (no flag at all) is unchanged: always `q4_k_m`, since that's the right choice when the hardware it'll run on is unknown.
-3. **Studio UI updated to match** — the export panel's Format dropdown gained an `iq4_xs` option, the size/time estimate and two/three-step warning banners now reflect real detected VRAM instead of a hardcoded `auto → q4_k_m` assumption, and the generate-console phase tracker shows the new importance-matrix step when it runs.
-
-**Fixes:**
-
-1. **`install.bat` pointed at renamed files** — its final success message still referenced `launch_web.bat`/`launch_app.bat`, which were renamed to `start_web.bat`/`start_app.bat` in a previous release. Fixed.
-2. **README overstated GGUF auto-selection** — it previously claimed `generate_llm.py` "auto-selects best GGUF type for your GPU" by default; the code actually always defaulted to `q4_k_m` regardless of VRAM. Docs now describe the real (fixed) default and the new explicit `auto` opt-in separately, instead of conflating the two.
-3. **Base Model Catalog was missing an entry** — `Qwen/Qwen3-72B` was already in the Studio's live catalog (`train/server.py`) but never made it into this README table.
-
-**Model catalog additions** (`train/server.py`): `HuggingFaceTB/SmolLM3-3B`, `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-9B`, and `Qwen/Qwen3.5-27B` — all Apache 2.0, no gating, native `transformers` support (verified before adding — `microsoft/Phi-4-mini-instruct` was considered and rejected because it requires `trust_remote_code=True`, the same fragility that already excludes Phi-3-mini-4k-instruct from this catalog).
-
----
-
-### 2026-06-10 — v1.0.1: Expanded Model Catalog, Silent BAT Launch Fix, CUDA Check Fix
-
-**Files:** `train/server.py`, `launch_web.bat`, `launch_app.bat`
-
-**New Models Added:**
-
-Ten new models added to the catalog (all Apache 2.0 or MIT — no gating, no token required):
-
-| New Model                           | Size  | Notes                                                      |
-|-------------------------------------|-------|------------------------------------------------------------|
-| `HuggingFaceTB/SmolLM2-360M`        | 360M  | Smallest practical model — rapid testing / tiny VRAM       |
-| `Qwen/Qwen3-0.6B`                   | 0.6B  | Qwen3 generation — hybrid thinking mode                    |
-| `Qwen/Qwen3-1.7B`                   | 1.7B  | Stronger than Qwen2.5-1.5B                                 |
-| `microsoft/Phi-3.5-mini-instruct`   | 3.8B  | 128K context, outperforms many 7B models                   |
-| `Qwen/Qwen3-4B`                     | 4B    | Outperforms many older 7B models                           |
-| `Qwen/Qwen3-8B`                     | 8B    | Latest Qwen — strong reasoning & instruction following     |
-| `allenai/OLMo-2-1124-7B`            | 7B    | Fully open (data + code + weights), great for research     |
-| `mistralai/Mistral-7B-v0.3`         | 7B    | Improved tokenizer over v0.1                               |
-| `allenai/OLMo-2-1124-13B`           | 13B   | Fully open mid-size model                                  |
-| `Qwen/Qwen3-14B`                    | 14B   | Latest Qwen — reasoning, coding, multilingual              |
-| `Qwen/Qwen3-32B`                    | 32B   | Top open-source quality, latest Qwen generation            |
-
-**Fixes:**
-
-1. **BAT silent-close fixed** — `launch_web.bat` and `launch_app.bat` now detect if the server is already running on port 5001 (via a socket connect test). If it is, the browser opens immediately and the window exits silently — no console flicker. If the server is not running, the window re-launches itself minimized so it sits in the background rather than taking focus on the desktop.
-
-2. **Torch CUDA outdated false-positive fixed** — The Package Manager's CUDA version check in `server.py` was incorrectly flagging PyTorch as outdated on machines with CUDA 12.8 when the installed wheel was already built for `cu128`. The detection logic now correctly maps the installed wheel's index URL to the running CUDA version before comparing, eliminating the false "PyTorch is outdated" warning.
-
----
-
-### 2026-05-13 — No Console Flashes, LoRA Folder Fix, Embedded Restart Fix
-
-**Files:** `train/server.py`, `train/generate_llm.py`, `train/train.py`, `train/studio.html`
-
-**Fixes:**
-
-1. **Console/window flashes eliminated** — All `subprocess.run()` and `subprocess.Popen()` calls (26 total across the three Python files) now include `creationflags=subprocess.CREATE_NO_WINDOW` on Windows. This prevents Windows from briefly showing a black console window each time a subprocess is spawned. The flashes were most noticeable when training completed (powercfg sleep-restore calls, wmic/taskkill cleanup) and during export (ollama registration, pip install, llama-quantize, GGUF converter).
-
-2. **LoRA folder deletion bug fixed** — The "Fresh Start" (Reset) button in `server.py` was calling `shutil.rmtree(_lora_base_dir)` — wiping the **entire** `models/<ModelName>/lora/` parent directory and destroying all LoRA subdirs for all base models in one shot. Now it surgically removes only checkpoint files (`checkpoint-N/` subdirs) and adapter files from the specific subdir matching the current model name + base model (using the same `{modelname}-{size}-{family}` naming formula as `train.py`). Other subdirs (e.g. a 14B adapter alongside a 7B adapter) are preserved.
-
-3. **Restart works correctly in desktop/embedded mode** — When `launch_app.bat` is used, Flask runs as a daemon thread inside the PyQt6 process. Previously, clicking "Restart Server" after a package upgrade would spawn a new `launch_app.py` process (second desktop window) and then call `sys.exit(0)` — killing the original window. Now `server.py` detects embedded mode (`__name__ != '__main__'`) and returns `{restarting: true, embedded: true}` without spawning or exiting. The UI (`studio.html`) was updated to check for `embedded: true` and reload the page immediately (500 ms) rather than waiting 4 seconds for a new server process.
-
----
-
-### 2026-05-12 — GGUF Metadata Patch: Fix [WinError 5] Access Denied on Windows
-
-**File:** `train/generate_llm.py` → `_patch_gguf_metadata()`
-
-**Problem:** After GGUF quantization, the metadata patcher (`_patch_gguf_metadata`) would fail on Windows with:
+### CLI Step 1 — Start the server (headless, no browser)
 
 ```
-⚠ GGUF metadata patch skipped: [WinError 5] Access is denied:
-  '...model.gguf.patching_tmp' -> '...model.gguf'
+python train/server.py --no-open
 ```
 
-**Root cause:** `GGUFReader` (from the `gguf` Python package) memory-maps the GGUF file via `numpy.memmap` stored in `reader.data`. The class has **no `close()` method** — the previous `hasattr(reader, "close")` guard was silently doing nothing. On Windows, the OS keeps the underlying file handle open as long as any Python reference to the memmap exists, so `os.replace(tmp, original)` always failed with "Access is denied" because the original GGUF file remained locked.
+Starts the Studio server at http://localhost:5001 without opening a browser window. Required only for the dataset build step; you can Ctrl+C it after that.
 
-**Fix:** Three-layer defence:
-1. `reader.data._mmap.close()` — close the raw mmap handle that numpy exposes internally
-2. `del reader.data` + `del reader` — drop all Python references to the memmap
-3. `gc.collect()` — force CPython to finalize the mmap handle immediately
+---
 
-Plus a retry fallback: if `os.replace()` still fails (e.g. race condition), explicitly `os.remove()` the original then `os.rename()` the temp file, retrying up to 5 times with 0.5 s sleeps.
+### CLI Step 2 — Build Dataset
 
-**Result:** GGUF metadata is now reliably patched on Windows. The model name, author, description, and system-prompt-aware chat template are baked directly into the `.gguf` file — making it fully self-contained for LM Studio and llama.cpp without requiring a Modelfile.
+```
+python -c "import requests; r = requests.post('http://localhost:5001/build'); print(r.json())"
+```
+
+Reads all knowledge files for the active model, runs sanity checks, and writes `models/<ModelName>/dataset/train_chatml.jsonl` and `train_alpaca.jsonl`. Requires the server to be running (step 1 above). Once done, you can stop the server.
+
+To scan and preview your knowledge files without building:
+
+```
+python train/import_knowledge.py
+python train/import_knowledge.py --dry-run
+```
+
+---
+
+### CLI Step 3 — Train
+
+```
+python train/train.py
+```
+
+Fine-tunes the LoRA adapter using the active model's dataset. All flags:
+
+| Flag                      | Default | Effect                                                        |
+|---------------------------|---------|---------------------------------------------------------------|
+| `--epochs N`              | auto    | Training passes. Auto picks 3-10 from your dataset size so small sets still get enough steps |
+| `--batch N`               | 2       | Per-device batch size (watch VRAM)                            |
+| `--grad_accum N`          | 4       | Gradient accumulation steps                                   |
+| `--lr FLOAT`              | 2e-4    | Learning rate                                                 |
+| `--max_seq_len N`         | 2048    | Maximum token sequence length                                 |
+| `--lora-r N`              | 16      | LoRA rank (auto-increased to 32 for models ≤1.5B)             |
+| `--lora-alpha N`          | 16      | LoRA alpha                                                    |
+| `--fmt chatml\|alpaca`    | chatml  | Dataset file to read (both are trained with the model's own chat template) |
+| `--rslora`                | off     | Rank-stabilised LoRA (steadier learning at higher ranks)      |
+| `--dora`                  | off     | DoRA - often slightly better quality, ~25% slower             |
+| `--neftune N`             | 0 (off) | NEFTune embedding noise (5 = typical); can blur exact facts   |
+| `--eval-split`            | off     | Hold out 5% to watch for overfitting                          |
+| `--no-4bit`               | off     | Full FP16/BF16 — needs more VRAM                              |
+| `--grad-ckpt`             | auto    | Force gradient checkpointing ON (~3 GB savings, ~40% slower)  |
+| `--no-grad-ckpt`          | auto    | Force gradient checkpointing OFF                              |
+| `--low-mem`               | off     | Aggressive RAM saving (batch=1, seq=1024, grad-ckpt ON)       |
+| `--fresh`                 | off     | Wipe existing LoRA adapter + checkpoints and start fresh      |
+| `--resume PATH`           | auto    | Resume from a specific checkpoint directory                   |
+
+Examples:
+
+```
+# Typical run
+python train/train.py
+
+# More epochs, larger batch (24+ GB VRAM)
+python train/train.py --epochs 5 --batch 4
+
+# Low VRAM mode (6-8 GB cards)
+python train/train.py --low-mem
+
+# Start completely fresh (wipe old adapter)
+python train/train.py --fresh
+
+# Resume from a specific checkpoint
+python train/train.py --resume "models/TestAI/lora/testai-7.6b-qwen2.5/checkpoint-500"
+```
+
+---
+
+### CLI Step 4 — Generate Model (export GGUF)
+
+```
+python train/generate_llm.py
+```
+
+Merges the LoRA adapter into the full base model and exports a `.gguf` file. All flags:
+
+| Flag                  | Default | Effect                                                                  |
+|-----------------------|---------|--------------------------------------------------------------------------|
+| `--gguf-type TYPE`    | q4_k_m  | GGUF quantization: `q4_k_m`, `q5_k_m`, `q6_k`, `q8_0`, `f16`, `q4_0`, `iq4_xs`, `auto`     |
+| `--imatrix`           | off     | Calibrate against this model's own training data (implied by `iq4_xs`)  |
+| `--no-gguf`           | off     | Skip GGUF — SafeTensors only (Ollama/LM Studio won't load it)           |
+| `--keep-safetensors`  | off     | Keep SafeTensors alongside the GGUF (saves ~15 GB by default)           |
+| `--no-bf16`           | off     | Force fp16 instead of bfloat16                                          |
+| `--lora PATH`         | auto    | Custom LoRA adapter directory                                           |
+| `--out PATH`          | auto    | Custom export destination                                               |
+
+The plain default (no `--gguf-type` at all) is always `q4_k_m` — fixed and portable, since the point of
+the default is a file that runs on hardware you don't control. `--gguf-type auto` is a separate, explicit
+opt-in: it detects **this machine's** VRAM and picks the best type for testing locally on the same GPU
+(24+ GB → q8_0, 12+ GB → q4_k_m, below that → iq4_xs) — don't use it for a file you intend to share,
+since a bigger GPU here doesn't help whoever you send it to.
+
+Examples:
+
+```
+# Default: portable q4_k_m, runs on any hardware
+python train/generate_llm.py
+
+# Auto-pick the best type for THIS machine's VRAM (for local testing, not sharing)
+python train/generate_llm.py --gguf-type auto
+
+# Export as q8_0 (near-lossless, ~8 GB)
+python train/generate_llm.py --gguf-type q8_0
+
+# Export as f16 (lossless, ~14 GB)
+python train/generate_llm.py --gguf-type f16
+
+# Export as iq4_xs — smaller than q4_k_m, imatrix-calibrated against the model's own training data
+python train/generate_llm.py --gguf-type iq4_xs
+
+# Keep SafeTensors files (needed for HuggingFace chat mode)
+python train/generate_llm.py --keep-safetensors
+```
+
+---
+
+### CLI Step 5 — Test / Chat
+
+```
+python chat_test/server.py
+```
+
+Opens the chat UI at **http://localhost:5000**. No flags needed — auto-detects the best available model format (GGUF preferred, SafeTensors fallback).
+
+---
+
+## File Overview
+
+| File / Folder                       | Purpose                                                                          |
+|-------------------------------------|----------------------------------------------------------------------------------|
+| `start_web.bat`                     | Launch the Training Studio web server (port 5001)                                |
+| `start_app.bat`                     | Launch the PyQt6 desktop app (no console window)                                 |
+| `install.bat`                       | Install Python dependencies + PyTorch + llama-quantize                           |
+| `train/server.py`                   | Training Studio server (Flask)                                                   |
+| `train/studio.html`                 | Training Studio UI                                                               |
+| `train/studio.css`                  | Training Studio stylesheet                                                       |
+| `train/train.py`                    | LoRA fine-tuning script                                                          |
+| `train/generate_llm.py`             | Merges LoRA + exports GGUF model                                                 |
+| `train/import_knowledge.py`         | Parses training data files into Q&A pairs                                        |
+| `train/chat_format.py`              | Chat-template helpers shared by training, export and chat                        |
+| `train/hf_auth.py`                  | Optional Hugging Face token, gated-model checks, native-architecture detection   |
+| `train/converter_patch.py`          | Small fix applied to the GGUF converter for newer transformers releases          |
+| `chat_test/server.py`               | Chat server — test your trained model (port 5000)                                |
+| `chat_test/chat.html`               | Chat UI                                                                          |
+| `models/<ModelName>/knowledge/`     | Source Q&A training data (txt files + manual entries)                            |
+| `models/<ModelName>/dataset/`       | Generated JSONL training files — created by Build Dataset                        |
+| `models/<ModelName>/lora/`          | Trained LoRA adapters — kept permanently as training artifacts                   |
+| `models/<ModelName>/gguf/`          | Exported GGUF model + Modelfile — load in Ollama or LM Studio                    |
+| `config.json`                       | Root index — active model name + list of all model names                         |
+| `requirements.txt`                  | Python dependencies                                                              |
+| `tools/install_llama_quantize.ps1`  | Download llama-quantize.exe from llama.cpp releases (called by `install.bat`)    |
+| `tools/convert_hf_to_gguf.py`       | Downloaded on demand — converts SafeTensors → GGUF                               |
+| `tools/verify_catalog.py`           | Checks every catalog model against the Hugging Face API (exists, ungated, license) |
+| `docs/`                             | Guides: training data, model & settings, using your model, troubleshooting       |
+| `tools/llama/`                      | llama-quantize.exe and required DLLs (installed by `install.bat`)                |
+
+---
+
+## Requirements
+
+Run `install.bat` — it handles everything automatically.
+
+To install manually:
+
+```
+# PyTorch (match your CUDA version — see https://pytorch.org/get-started/locally/):
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# All other dependencies:
+pip install -r requirements.txt
+
+```
+
+**Key dependencies:**
+
+| Package                        | Purpose                                                          |
+|--------------------------------|------------------------------------------------------------------|
+| `flask`, `flask-cors`          | Training Studio web server                                       |
+| `psutil`                       | CPU / RAM monitoring in the Studio                               |
+| `transformers`, `peft`, `trl`  | Model loading, LoRA fine-tuning                                  |
+| `accelerate`, `bitsandbytes`   | 4-bit QLoRA training                                             |
+| `datasets`                     | JSONL dataset loading                                            |
+| `sentencepiece`, `safetensors` | Tokenizer + model serialization                                  |
+| `huggingface_hub`              | Model validation + downloads                                     |
+| `gguf`                         | GGUF file conversion                                             |
+| `requests`, `tqdm`             | Utilities                                                        |
+| `torch`                        | GPU training (installed separately — CUDA version matters)       |
+| llama.cpp (`tools/llama/`)     | `llama-quantize`, `llama-imatrix` and `llama-server` (downloaded by `install.bat`) |
+| `pynvml`                       | Optional — faster GPU monitoring (falls back to `nvidia-smi`)    |
+
+---
+
+---
+
+## About this project
+
+> **About this project**
+> This is a passion project - I love learning new things, and this was built to scratch that itch.
+> It will contain bugs and it may not be the best way to do everything. I made it to learn from and shared
+> it so others can too - and hopefully make it better. Issues and pull requests are welcome.

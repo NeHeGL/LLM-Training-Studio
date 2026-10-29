@@ -976,6 +976,21 @@ class ModelBase:
             logger.warning("Trying to load config.json instead")
             with open(dir_model / "config.json", "r", encoding="utf-8") as f:
                 config = json.load(f)
+        # LLM-TRAINING-STUDIO-PATCH: AutoConfig.to_dict() on newer transformers rewrites some configs
+        # (e.g. Gemma 4 loses text_config.global_head_dim). Fill in any key that is present in the
+        # raw config.json but missing after that round-trip. Purely additive.
+        try:
+            with open(dir_model / "config.json", "r", encoding="utf-8") as _f:
+                _raw_cfg = json.load(_f)
+            def _fill_missing(dst, src):
+                for _k, _v in src.items():
+                    if _k not in dst:
+                        dst[_k] = _v
+                    elif isinstance(_v, dict) and isinstance(dst[_k], dict):
+                        _fill_missing(dst[_k], _v)
+            _fill_missing(config, _raw_cfg)
+        except Exception:
+            pass
         if "llm_config" in config:
             # rename for InternVL
             config["text_config"] = config["llm_config"]
