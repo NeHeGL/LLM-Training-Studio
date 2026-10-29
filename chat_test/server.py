@@ -4,7 +4,7 @@ Author: Jeff Molofee (aka NeHe) — 2026
 Serves chat.html and provides /chat + /status API endpoints.
 
 Automatically detects and loads the best available model format:
-  1. GGUF file  (.gguf) — loaded via llama-cpp-python. Fast, no Ollama needed.
+  1. GGUF file  (.gguf) — loaded via llama.cpp's llama-server (installed by install.bat). No Ollama needed.
   2. SafeTensors directory — loaded via HuggingFace transformers (requires more VRAM/RAM).
 
 Usage:
@@ -18,10 +18,12 @@ Then open: http://localhost:5000
 """
 
 import argparse
+import json
 import os
 import re
 import sys
 import threading
+import time
 import webbrowser
 
 if sys.platform == "win32":
@@ -146,7 +148,7 @@ def _has_cuda():
 
 
 # ── GGUF flag — set by find_model() / main() ──────────────────────────────────
-_use_gguf = False   # True when loading a .gguf file via llama-cpp-python
+_use_gguf = False   # True when loading a .gguf file via llama.cpp's llama-server
 
 
 def find_gguf_in_dir(directory):
@@ -189,89 +191,83 @@ def is_lora_adapter(path):
     return os.path.exists(os.path.join(path, "adapter_config.json"))
 
 
-def _install_llama_cpp():
-    """
-    Install llama-cpp-python for GGUF support.
-    Strategy (fastest to slowest):
-      1. Try a pre-built binary wheel from the llama-cpp-python releases page
-         (no C++ compiler needed, installs in seconds).
-      2. Fall back to CPU-only binary wheel via --prefer-binary.
-      3. Last resort: source build (slow, needs C++ toolchain).
-    """
-    import subprocess
+# ── GGUF chat via llama.cpp's own llama-server ───────────────────────────────
+# install.bat downloads llama.cpp's official Windows build into tools/llama/ (the same one that
+# provides llama-quantize). Its llama-server loads the exported .gguf and serves an
+# OpenAI-compatible API; --jinja makes it use the chat template stored INSIDE the GGUF, i.e. the
+# exact format the model was trained with. No Python wheel to compile or match to a CUDA version.
+_llama_proc = None
+_llama_port = None
 
-    # ── Step 1: pre-built CUDA wheel from the official releases ──────────────
-    # The llama-cpp-python project publishes pre-built wheels for common CUDA
-    # versions at: https://github.com/abetlen/llama-cpp-python/releases
-    # Using --extra-index-url lets pip find them without compiling anything.
-    # Try cu124 first (covers CUDA 12.4–12.8), then cu121 as fallback.
-    print("[server] Installing llama-cpp-python (pre-built CUDA wheel)...")
-    for cuda_tag in ("cu124", "cu121", "cu118"):
-        cuda_index = f"https://abetlen.github.io/llama-cpp-python/whl/{cuda_tag}"
-        r = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "llama-cpp-python",
-             "--prefer-binary", "--extra-index-url", cuda_index, "-q"],
-            capture_output=True, text=True
-        )
-        if r.returncode == 0:
-            print(f"[server] llama-cpp-python installed (CUDA wheel: {cuda_tag}).")
-            return
 
-    # ── Step 2: CPU-only pre-built wheel ─────────────────────────────────────
-    print("[server] CUDA wheel not available  -  installing CPU-only llama-cpp-python...")
-    r = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "llama-cpp-python",
-         "--prefer-binary", "-q"],
-        capture_output=True, text=True
-    )
-    if r.returncode == 0:
-        print("[server] llama-cpp-python installed (CPU-only wheel).")
-        return
+def _find_llama_server():
+    import shutil
+    exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    for d in (os.path.join(ROOT, "tools", "llama"), os.path.join(ROOT, "llama.cpp"), os.path.expanduser("~/llama.cpp")):
+        cand = os.path.join(d, exe)
+        if os.path.isfile(cand):
+            return cand
+    return shutil.which("llama-server")
 
-    # ── Step 3: source build as last resort ──────────────────────────────────
-    print("[server] Binary wheel unavailable  -  compiling from source (this may take several minutes)...")
-    env = os.environ.copy()
-    env["CMAKE_ARGS"] = "-DGGML_CUDA=on"
-    r = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "llama-cpp-python", "-q"],
-        capture_output=True, text=True, env=env
-    )
-    if r.returncode != 0:
-        # Final fallback: CPU source build
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "llama-cpp-python", "-q"],
-            capture_output=True, text=True
-        )
+
+def _free_port():
+    import socket
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        return sk.getsockname()[1]
+
+
+def _stop_llama_server():
+    global _llama_proc
+    if _llama_proc and _llama_proc.poll() is None:
+        try:
+            _llama_proc.kill()
+        except Exception:
+            pass
 
 
 def load_model_gguf_bg(gguf_path):
-    """Load a GGUF model using llama-cpp-python. No Ollama required."""
-    global _model, _tokenizer, _ready, _status_msg
+    """Start llama-server on the exported GGUF. No Ollama and no Python wheel required."""
+    global _model, _tokenizer, _ready, _status_msg, _llama_proc, _llama_port
+    import atexit, subprocess, urllib.request
     try:
-        try:
-            from llama_cpp import Llama
-        except ImportError:
-            _status_msg = "Installing llama-cpp-python..."
-            print("[server] llama-cpp-python not found, installing...")
-            _install_llama_cpp()
-            from llama_cpp import Llama
-
+        exe = _find_llama_server()
+        if not exe:
+            _status_msg = ("Error: llama-server was not found. Run install.bat again (its last step downloads "
+                           "llama.cpp into tools/llama), or open the .gguf in Ollama or LM Studio instead.")
+            print("[server] ERROR: llama-server not found in tools/llama")
+            return
         gi = _gpu_info()
-        # n_gpu_layers=-1 offloads all layers to GPU; 0 = CPU only
-        n_gpu_layers = -1 if gi["has_cuda"] else 0
-        gpu_label = f"{gi['name']} ({gi['vram_gb']:.1f} GB)" if gi["has_cuda"] else "CPU"
-
-        _status_msg = f"Loading GGUF model on {gpu_label}..."
+        _llama_port = _free_port()
+        cmd = [exe, "-m", gguf_path, "--host", "127.0.0.1", "--port", str(_llama_port),
+               "-c", "4096", "--jinja", "-ngl", "99" if gi["has_cuda"] else "0"]
+        _status_msg = "Starting llama-server and loading the model..."
         print(f"[server] Loading GGUF: {gguf_path}")
-        print(f"[server] Device: {gpu_label}  |  n_gpu_layers: {n_gpu_layers}")
-
-        _model = Llama(
-            model_path=gguf_path,
-            n_ctx=4096,           # context window
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
-        )
-        # _tokenizer is not used for GGUF — llama-cpp handles tokenization internally
+        print(f"[server] {' '.join(cmd)}")
+        log_path = os.path.join(TEST_DIR, "llama-server.log")
+        _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
+        atexit.register(_stop_llama_server)
+        for _ in range(600):
+            if _llama_proc.poll() is not None:
+                tail = ""
+                try:
+                    tail = open(log_path, errors="replace").read()[-300:]
+                except OSError:
+                    pass
+                _status_msg = f"Error loading GGUF model: llama-server exited ({_llama_proc.returncode}). {tail}"
+                print(f"[server] ERROR: llama-server exited with {_llama_proc.returncode}")
+                return
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{_llama_port}/health", timeout=2) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            _status_msg = "Error loading GGUF model: llama-server did not become ready in time."
+            return
+        _model = "llama-server"
         _tokenizer = None
         _ready = True
         _status_msg = "Model ready (GGUF)"
@@ -283,29 +279,30 @@ def load_model_gguf_bg(gguf_path):
 
 
 def generate_gguf(user_input, history, attachments=None, max_new_tokens=512, temperature=0.3, top_p=0.9):
-    """Generate a response using the loaded llama-cpp-python GGUF model."""
+    """Ask the running llama-server for a reply (OpenAI-compatible chat endpoint)."""
+    import urllib.request
     content = user_input
     if attachments:
         for att in attachments:
             if att.get("type") == "text":
                 content += f"\n\n[Attached file: {att['name']}]\n{att['data']}"
             elif att.get("type") == "image":
-                content += f"\n[Image attached: {att['name']} — text-only model]"
+                content += f"\n[Image attached: {att['name']} - text-only model]"
 
-    # Build ChatML prompt manually (llama-cpp uses create_chat_completion which handles this)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(history)
     messages.append({"role": "user", "content": content})
 
-    result = _model.create_chat_completion(
-        messages=messages,
-        max_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        repeat_penalty=1.1,
-        stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
-    )
-    reply = result["choices"][0]["message"]["content"].strip()
+    body = json.dumps({
+        "messages": messages, "max_tokens": max_new_tokens, "temperature": temperature,
+        "top_p": top_p, "repeat_penalty": 1.1, "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(f"http://127.0.0.1:{_llama_port}/v1/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=300) as r:
+        result = json.loads(r.read().decode("utf-8"))
+    reply = (result["choices"][0]["message"].get("content") or "").strip()
     return _sanitize_reply(reply)
 
 
@@ -590,7 +587,7 @@ def main():
     print("  LLM Chat Server - NeHe Productions")
     print("=" * 60)
     print(f"[server] Model     : {model_path}")
-    print(f"[server] Format    : {'GGUF (llama-cpp-python)' if _use_gguf else 'SafeTensors (HuggingFace)'}")
+    print(f"[server] Format    : {'GGUF (llama.cpp llama-server)' if _use_gguf else 'SafeTensors (HuggingFace)'}")
     print(f"[server] Port      : {args.port}")
     print(f"[server] Chat UI   : http://localhost:{args.port}")
     print()

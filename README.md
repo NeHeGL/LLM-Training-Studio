@@ -183,7 +183,7 @@ python chat_test/server.py
 Opens at **http://localhost:5000** — full chat UI to test the exported model.
 
 The chat server automatically detects the best available format:
-1. **GGUF** (`.gguf` file via `llama-cpp-python`) — preferred, fast, no Ollama needed
+1. **GGUF** (`.gguf` file via llama.cpp's `llama-server`, installed by `install.bat`) — preferred, no Ollama needed
 2. **SafeTensors** directory (via HuggingFace `transformers`) — requires more VRAM/RAM
 
 ---
@@ -549,8 +549,6 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 # All other dependencies:
 pip install -r requirements.txt
 
-# GGUF chat support (optional — auto-installed on first use of chat server):
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu128
 ```
 
 **Key dependencies:**
@@ -567,7 +565,7 @@ pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-c
 | `gguf`                         | GGUF file conversion                                             |
 | `requests`, `tqdm`             | Utilities                                                        |
 | `torch`                        | GPU training (installed separately — CUDA version matters)       |
-| `llama-cpp-python`             | GGUF inference in chat server (auto-installed on demand)         |
+| llama.cpp (`tools/llama/`)     | `llama-quantize`, `llama-imatrix` and `llama-server` (downloaded by `install.bat`) |
 | `pynvml`                       | Optional — faster GPU monitoring (falls back to `nvidia-smi`)    |
 
 ---

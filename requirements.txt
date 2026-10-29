@@ -7,8 +7,8 @@
 # Manual install example (RTX 50xx / 40xx / 30xx / 20xx, recent driver):
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 #
-# llama-cpp-python (optional — GGUF inference without Ollama):
-#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu128
+# GGUF export and the chat tester use llama.cpp's own tools (llama-quantize, llama-imatrix, llama-server),
+# which install.bat downloads into tools/llama/. No llama-cpp-python needed.
 
 # ── Training Studio server ────────────────────────────
 flask>=3.1,<4

@@ -1622,8 +1622,10 @@ function _buildCatalogDropdown(data) {
 
   // Update notes and sync the hidden input to the effective value
   if (savedInCatalog) {
-    // Saved value is valid — show its notes
+    // Saved value is valid — show its notes (and refresh the VRAM estimate, which may have
+    // been computed earlier, before the saved base model was known)
     _showCatalogNotes(savedInCatalog);
+    updateVramEstimate();
   } else if (effectiveVal) {
     // No saved value (or stale) — auto-select recommended without saving to server
     _autoSelectRecommendedModel(effectiveVal);
