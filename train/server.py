@@ -290,7 +290,7 @@ MODEL_CATALOG = [
         "tag": "4B ⭐",
     },
     {
-        "id": "google/gemma-4-E2B",
+        "id": "google/gemma-4-E2B-it",
         "params_b": 5.12,
         "min_vram_4bit": 4,
         "min_vram_fp16": 12,
@@ -338,7 +338,7 @@ MODEL_CATALOG = [
         "tag": "8B ⭐",
     },
     {
-        "id": "google/gemma-4-E4B",
+        "id": "google/gemma-4-E4B-it",
         "params_b": 8.0,
         "min_vram_4bit": 5,
         "min_vram_fp16": 18,
@@ -362,7 +362,7 @@ MODEL_CATALOG = [
         "tag": "9B",
     },
     {
-        "id": "google/gemma-4-12B",
+        "id": "google/gemma-4-12B-it",
         "params_b": 11.96,
         "min_vram_4bit": 8,
         "min_vram_fp16": 26,
@@ -410,7 +410,7 @@ MODEL_CATALOG = [
         "tag": "27B ⭐",
     },
     {
-        "id": "google/gemma-4-31B",
+        "id": "google/gemma-4-31B-it",
         "params_b": 31.3,
         "min_vram_4bit": 20,
         "min_vram_fp16": 64,
@@ -1372,6 +1372,9 @@ def create_app():
                     "lr":      str(ts.get("lr", "2e-4")),
                     "lora_r":  int(ts.get("lora_r", 16)),
                     "seq_len": int(ts.get("seq_len", 2048)),
+                    "rslora":  bool(ts.get("rslora", False)),
+                    "dora":    bool(ts.get("dora", False)),
+                    "neftune": float(ts.get("neftune", 0) or 0),
                 }
         save_model_config(m)
         return jsonify({"saved": True})
@@ -1945,6 +1948,12 @@ def create_app():
                 cmd.append("--no-4bit")
             if _eval_split:
                 cmd.append("--eval-split")
+            if _ts.get("rslora"):
+                cmd.append("--rslora")
+            if _ts.get("dora"):
+                cmd.append("--dora")
+            if float(_ts.get("neftune", 0) or 0) > 0:
+                cmd += ["--neftune", str(_ts["neftune"])]
 
             is_fresh = request.args.get('fresh') == '1'
             if is_fresh:

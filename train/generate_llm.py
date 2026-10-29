@@ -57,6 +57,11 @@ ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _saved_power_settings = {}   # populated by _prevent_sleep(), consumed by _restore_sleep()
 
 
+def _needs_remote_code(model_id):
+    from hf_auth import needs_remote_code
+    return needs_remote_code(model_id)
+
+
 def _read_powercfg_value(setting_name):
     """
     Read a single powercfg /query value by name (e.g. 'standby-timeout-ac').
@@ -492,6 +497,11 @@ def _ensure_gguf_package():
     return True
 
 
+# Filled in by main(): the exact template the model was trained with (jinja for the GGUF,
+# Go template + stops for the Ollama Modelfile). None = use the legacy ChatML defaults.
+_EXPORT_TEMPLATE = {"jinja": None, "go": None, "stops": []}
+
+
 def _patch_gguf_metadata(gguf_path, model_name, system_prompt, base_model, ai_owner, ai_company):
     """
     Patch key metadata fields directly into an existing GGUF file so the
@@ -565,6 +575,9 @@ def _patch_gguf_metadata(gguf_path, model_name, system_prompt, base_model, ai_ow
                 "{%- endfor -%}"
                 "{%- if add_generation_prompt -%}<|im_start|>assistant\n{%- endif -%}"
             )
+
+        if _EXPORT_TEMPLATE["jinja"]:
+            chat_template = _EXPORT_TEMPLATE["jinja"]
 
         description = f"{model_name} — fine-tuned by {ai_owner} ({ai_company})"
 
@@ -1141,18 +1154,24 @@ def _write_modelfile(export_dir, gguf_path, model_name, system_prompt=""):
     # Use the provided system_prompt; fall back to a minimal identity string.
     _system = system_prompt.strip() if system_prompt else f"You are {model_name}, a helpful AI assistant."
 
-    lines = [
-        f"FROM {from_line}",
-        f'TEMPLATE "{_chatml_template}"',
+    _go = _EXPORT_TEMPLATE["go"]
+    _stops = _EXPORT_TEMPLATE["stops"] or ["<|im_end|>", "<|endoftext|>"]
+    lines = [f"FROM {from_line}"]
+    if _EXPORT_TEMPLATE["jinja"] and _go is None:
+        pass   # unverified family: Ollama falls back to the template stored in the GGUF
+    elif _go:
+        lines.append('TEMPLATE """' + _go + '"""')
+    else:
+        lines.append(f'TEMPLATE "{_chatml_template}"')
+    lines += [
         f'SYSTEM """{_system}"""',
         f"PARAMETER temperature {temperature}",
         f"PARAMETER top_p {top_p}",
         f"PARAMETER repeat_penalty {repeat_penalty}",
         f"PARAMETER num_predict {num_predict}",
-        "PARAMETER stop <|im_end|>",
-        "PARAMETER stop <|endoftext|>",
-        "",
     ]
+    lines += [f"PARAMETER stop {st}" for st in _stops]
+    lines.append("")
 
     # Name the Modelfile to match the GGUF stem with a .ollama extension so
     # multiple builds coexist in the same flat gguf/ directory:
@@ -1511,7 +1530,7 @@ def main():
     # ── Tokenizer ─────────────────────────────────────────────────────────────
     tok_path = lora_dir if os.path.exists(os.path.join(lora_dir, "tokenizer_config.json")) else BASE_MODEL
     print(f"[export] Loading tokenizer from: {tok_path}")
-    tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=_needs_remote_code(BASE_MODEL))
 
     # Load the system prompt from config so it can be baked into the chat template.
     # This is the correct way to embed identity — convert_hf_to_gguf.py reads the
@@ -1557,8 +1576,22 @@ def main():
             "{{ 'Output: ' }}"
             "{% endif %}"
         )
+    elif getattr(tokenizer, "chat_template", None):
+        # The model was trained with its own native template (saved with the LoRA), so the
+        # exported model must be prompted with exactly that template - not a ChatML stand-in.
+        from chat_format import wrap_native, ollama_template
+        _native = tokenizer.chat_template
+        if isinstance(_native, dict):
+            _native = _native.get("default") or next(iter(_native.values()))
+        print("[export] Keeping the model's native chat template (thinking off, system prompt as default).")
+        tokenizer.chat_template = wrap_native(_native, _sys_prompt)
+        _EXPORT_TEMPLATE["jinja"] = tokenizer.chat_template
+        _EXPORT_TEMPLATE["go"], _EXPORT_TEMPLATE["stops"] = ollama_template(tokenizer)
+        if _EXPORT_TEMPLATE["go"] is None:
+            print("[export] NOTE: no verified Ollama template for this model family; the Modelfile "
+                  "will omit TEMPLATE. LM Studio / llama.cpp read the template from the GGUF.")
     else:
-        # Standard ChatML — used by Qwen, Mistral, Pythia, SmolLM2, etc.
+        # No chat template at all (plain base model): inject ChatML with the system prompt default.
         # The system prompt is embedded as the default; callers can override it.
         _escaped = _sys_prompt.replace("\\", "\\\\").replace("'", "\\'")
         if getattr(tokenizer, "chat_template", None):
@@ -1618,7 +1651,7 @@ def main():
         dtype             = dtype,
         device_map        = _merge_device_map,
         low_cpu_mem_usage = True,   # load shard-by-shard → halves peak RAM usage
-        trust_remote_code = True,
+        trust_remote_code = _needs_remote_code(BASE_MODEL),
     )
     print(f"[export] Base model loaded ✓", flush=True)
 
@@ -1728,6 +1761,25 @@ def main():
             max_shard_size="500MB",
         )
         tokenizer.save_pretrained(export_dir)
+        # transformers 5 rewrites tokenizer_class to "TokenizersBackend", but
+        # convert_hf_to_gguf.py picks its vocab loader from the original class name
+        # (e.g. Phi-4's "GPT2Tokenizer"). Restore the base model's value.
+        try:
+            import json as _jtk
+            from huggingface_hub import hf_hub_download as _hfd
+            _cfg_p = os.path.join(export_dir, "tokenizer_config.json")
+            _base_p = (os.path.join(BASE_MODEL, "tokenizer_config.json") if os.path.isdir(BASE_MODEL)
+                       else _hfd(BASE_MODEL, "tokenizer_config.json"))
+            with open(_base_p, encoding="utf-8") as _f:
+                _orig_cls = _jtk.load(_f).get("tokenizer_class")
+            with open(_cfg_p, encoding="utf-8") as _f:
+                _tcfg = _jtk.load(_f)
+            if _orig_cls and _tcfg.get("tokenizer_class") != _orig_cls:
+                _tcfg["tokenizer_class"] = _orig_cls
+                with open(_cfg_p, "w", encoding="utf-8") as _f:
+                    _jtk.dump(_tcfg, _f, indent=2, ensure_ascii=False)
+        except Exception as _e:
+            print(f"[export] (could not restore tokenizer_class: {_e})")
         print(f"[export] Model saved ✓", flush=True)
 
         # ── Write a corrected generation_config.json ──────────────────────────

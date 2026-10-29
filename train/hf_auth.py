@@ -74,3 +74,22 @@ def check_model(model_id):
         return True, f"could not verify (HTTP {code}); continuing"
     except Exception as e:  # offline, DNS, etc. - cached models still work
         return True, f"could not verify ({type(e).__name__}); continuing"
+
+
+_remote_cache = {}
+
+
+def needs_remote_code(model_id):
+    """True only if transformers can't build this architecture natively.
+
+    Repo-bundled modeling code (trust_remote_code) is fragile: it often breaks on newer
+    transformers releases (e.g. Phi-3/4's modeling_phi3.py). Native support is preferred.
+    """
+    if model_id not in _remote_cache:
+        try:
+            from transformers import AutoConfig
+            AutoConfig.from_pretrained(model_id, trust_remote_code=False)
+            _remote_cache[model_id] = False
+        except Exception:
+            _remote_cache[model_id] = True
+    return _remote_cache[model_id]

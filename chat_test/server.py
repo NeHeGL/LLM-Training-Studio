@@ -37,6 +37,9 @@ if not sys.pycache_prefix:
 
 ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(ROOT, "train"))   # shared chat_format / hf_auth helpers
+import chat_format
+from hf_auth import needs_remote_code
 
 def _load_config():
     """Load active model config from config.json + per-model config file.
@@ -324,7 +327,7 @@ def load_model_bg(model_path, use_4bit):
 
         _status_msg = "Loading tokenizer..."
         print(f"[server] Loading tokenizer from: {tok_path}")
-        _tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=True)
+        _tokenizer = AutoTokenizer.from_pretrained(tok_path, trust_remote_code=needs_remote_code(BASE_MODEL_FOR_LORA or tok_path))
         _tokenizer.pad_token = _tokenizer.eos_token
 
         # Base models (non-instruct) don't have a chat template set.
@@ -378,12 +381,13 @@ def load_model_bg(model_path, use_4bit):
                 quantization_config=bnb_cfg,
                 dtype=bnb_compute,   # match non-quantized layers to avoid cast overhead
                 device_map="auto",
-                trust_remote_code=True,
+                trust_remote_code=needs_remote_code(base),
             )
         else:
             dtype = torch.bfloat16 if bf16 and cuda else (torch.float16 if cuda else torch.float32)
             _model = AutoModelForCausalLM.from_pretrained(
-                base, dtype=dtype, device_map="auto" if cuda else None, trust_remote_code=True)
+                base, dtype=dtype, device_map="auto" if cuda else None,
+                trust_remote_code=needs_remote_code(base))
 
         if lora:
             from peft import PeftModel
@@ -418,7 +422,7 @@ def generate(user_input, history, attachments=None, max_new_tokens=512, temperat
     messages.extend(history)
     messages.append({"role": "user", "content": content})
 
-    text = _tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = chat_format.render(_tokenizer, messages, add_generation_prompt=True)
     inputs = _tokenizer(text, return_tensors="pt")
     if next(_model.parameters()).is_cuda:
         inputs = {k: v.cuda() for k, v in inputs.items()}

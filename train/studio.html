@@ -322,8 +322,23 @@
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;border-top:1px solid #1e2a3a;margin-top:2px;">
               <input type="checkbox" id="ts-eval-split" onchange="saveTrainingSettings()"
                 style="width:14px;height:14px;accent-color:#38bdf8;cursor:pointer;flex-shrink:0;">
-              <span style="color:#94a3b8;line-height:1.4;">Hold out 5% for overfitting check<br><span style="font-size:0.72rem;color:#6b7fa0;">Trains on 95% of data. Requires 20+ examples.</span></span>
+              <span style="color:#94a3b8;line-height:1.4;">Hold out 5% for overfitting check<br><span style="font-size:0.72rem;color:#6b7fa0;">Trains on 95% of data, so ~5% of facts are never learned. Requires 20+ examples.</span></span>
             </label>
+            <details style="border-top:1px solid #1e2a3a;padding-top:4px;">
+              <summary style="color:#64748b;cursor:pointer;font-size:0.78rem;">Advanced LoRA options</summary>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-rslora" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">rsLoRA<br><span style="font-size:0.72rem;color:#6b7fa0;">Stabler learning at higher ranks (r&ge;32).</span></span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-dora" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">DoRA<br><span style="font-size:0.72rem;color:#6b7fa0;">Slightly better quality, ~25% slower, more VRAM.</span></span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="ts-neftune" onchange="saveTrainingSettings()" style="width:14px;height:14px;accent-color:#38bdf8;flex-shrink:0;">
+                <span style="color:#94a3b8;line-height:1.4;">NEFTune noise<br><span style="font-size:0.72rem;color:#6b7fa0;">Chattier style; can blur exact facts, so off by default.</span></span>
+              </label>
+            </details>
           </div>
         </div>
       </div>
@@ -1370,6 +1385,9 @@ async function saveTrainingSettings() {
     lora_r:     parseInt(document.getElementById('ts-lora-r').value) || 16,
     seq_len:    parseInt(document.getElementById('ts-seq-len').value) || 2048,
     eval_split: document.getElementById('ts-eval-split').checked,
+    rslora:     document.getElementById('ts-rslora').checked,
+    dora:       document.getElementById('ts-dora').checked,
+    neftune:    document.getElementById('ts-neftune').checked ? 5 : 0,
   };
   try {
     const r = await fetch(API + '/models/update', {
@@ -1438,6 +1456,9 @@ function _applyTrainingSettings(ts) {
   if (ts.lora_r)             document.getElementById('ts-lora-r').value     = ts.lora_r;
   if (ts.seq_len)            document.getElementById('ts-seq-len').value    = ts.seq_len;
   if (ts.eval_split != null) document.getElementById('ts-eval-split').checked = !!ts.eval_split;
+  document.getElementById('ts-rslora').checked   = !!ts.rslora;
+  document.getElementById('ts-dora').checked     = !!ts.dora;
+  document.getElementById('ts-neftune').checked  = !!(ts.neftune > 0);
 }
 
 function _setQuantOptionsForVram(vram, bf16) {
