@@ -12,8 +12,11 @@ param(
     [string]$LlamaDir = "$PSScriptRoot\llama",
     [string]$LlamaExe = "$PSScriptRoot\llama\llama-quantize.exe",
     [string]$CudaDir  = "$PSScriptRoot\llama-cuda",
-    [switch]$NoCuda
+    [switch]$NoCuda,
+    [string]$CudaTag = ""          # force "13.4" or "12.4" instead of choosing from the GPU/driver (testing, special cases)
 )
+
+. "$PSScriptRoot\llama_cuda_tag.ps1"
 
 $ProgressPreference = 'SilentlyContinue'     # Windows PowerShell 5.1 downloads are ~10x slower with the progress bar
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -85,17 +88,8 @@ function Install-CudaBuild {
     if ($text -notmatch 'CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)') { return }
     $drv = [version]"$($Matches[1]).$($Matches[2])"
 
-    # Which llama.cpp CUDA build can this card + driver run?
-    #   cuda-13.4: Turing (RTX 20xx) and newer, needs driver CUDA >= 13.4; required for Blackwell (RTX 50xx)
-    #   cuda-12.4: older cards (GTX 10xx / Titan V) and drivers between 12.4 and 13.3 (not Blackwell)
-    $tag = $null
-    if ($cc -lt [version]"7.5") {
-        if ($drv -ge [version]"12.4") { $tag = "12.4" }
-    } elseif ($drv -ge [version]"13.4") {
-        $tag = "13.4"
-    } elseif ($cc -lt [version]"12.0" -and $drv -ge [version]"12.4") {
-        $tag = "12.4"
-    }
+    # Which llama.cpp CUDA build can this card + driver run? (rules live in llama_cuda_tag.ps1)
+    $tag = if ($CudaTag) { $CudaTag } else { Select-CudaTag $cc $drv }
     if (-not $tag) {
         Write-Host "  (GPU llama.cpp build skipped: the NVIDIA driver is too old for it - the CPU build is used. Update the driver to enable it.)"
         return
