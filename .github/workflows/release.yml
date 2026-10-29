@@ -1,42 +1,108 @@
 name: Release
 
+# Run by hand: Actions > Release > Run workflow, and type the version (e.g. v1.2.0).
+# Before running, add a "### <date> - vX.Y.Z: title" entry for that version at the top of CHANGELOG.md:
+# the release notes ("what's new") are taken from it, and the run stops with a clear message if it is missing.
+# "dry run" builds the bundle and notes and attaches them to the run, without tagging or publishing anything.
+
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. v1.2.3)'
+        description: 'Version to release (e.g. v1.2.0)'
         required: true
+      dry_run:
+        description: 'Dry run: build the bundle and notes, but do not tag or publish'
+        type: boolean
+        default: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VER: ${{ inputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
-      - name: Create and push tag
+      - name: Check the version and the changelog entry
         run: |
-          git tag ${{ inputs.version }}
-          git push origin ${{ inputs.version }}
+          if ! [[ "$VER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like v1.2.0 (got '$VER')"; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VER" >/dev/null 2>&1; then
+            echo "::error::Tag $VER already exists. Pick a new version."; exit 1
+          fi
+          # Entry for this version = the "### ... vX.Y.Z ..." heading in CHANGELOG.md up to the next "### " heading
+          awk -v ver="$VER" '
+            /^### / {
+              if (on) exit
+              i = index($0, " " ver)                       # the version, as a whole word after a space
+              if (i > 0) {
+                c = substr($0, i + length(ver) + 1, 1)     # next character must end the version (v1.2.0 is not v1.2.01)
+                if (c == "" || c == ":" || c == " ") { on = 1; next }
+              }
+            }
+            on { print }
+          ' CHANGELOG.md > changes.md
+          if ! grep -q '[^[:space:]]' changes.md; then
+            echo "::error::CHANGELOG.md has no entry for $VER. Add a '### <date> - $VER: title' section first."; exit 1
+          fi
+          echo "Release notes will say:"; cat changes.md
 
-      - name: Create GitHub Release
+      - name: Build the bundle
+        run: |
+          ZIP="LLM-Training-Studio-${VER}.zip"
+          # Everything in the repo except the GitHub plumbing, inside one folder so it unzips tidily
+          git archive --format=zip --prefix=LLM-Training-Studio/ -o "$ZIP" HEAD -- . ':(exclude).github' ':(exclude).gitignore'
+          echo "ZIP_NAME=$ZIP" >> "$GITHUB_ENV"
+          unzip -l "$ZIP" | tail -n 3
+
+      - name: Build the release notes
+        run: |
+          {
+            echo "### What's new in $VER ($(date -u +%Y-%m-%d))"
+            echo
+            cat changes.md
+            echo
+            echo "---"
+            echo
+            echo "### Install"
+            echo "1. Download **LLM-Training-Studio-${VER}.zip** below (the bundle, not the automatic \"Source code\" files)"
+            echo "2. Extract it anywhere"
+            echo "3. Double-click \`start_web.bat\` (browser) or \`start_app.bat\` (desktop window). The first launch runs \`install.bat\`, which sets everything up."
+            echo
+            echo "### Requirements"
+            echo "- Windows 10/11 (64-bit) and an NVIDIA graphics card (RTX 20-series or newer recommended, 8 GB of video memory or more)"
+            echo "- Roughly 10 GB of free disk space for the install, plus room for the models you train"
+            echo
+            echo "### Guides"
+            echo "[Writing good training data](https://github.com/NeHeGL/LLM-Training-Studio/blob/${VER}/docs/writing-good-training-data.md) |"
+            echo "[Choosing a model and settings](https://github.com/NeHeGL/LLM-Training-Studio/blob/${VER}/docs/choosing-a-model-and-settings.md) |"
+            echo "[Using your model in Ollama and LM Studio](https://github.com/NeHeGL/LLM-Training-Studio/blob/${VER}/docs/using-your-model.md) |"
+            echo "[Troubleshooting](https://github.com/NeHeGL/LLM-Training-Studio/blob/${VER}/docs/troubleshooting.md)"
+            echo
+            echo "Full history: [CHANGELOG.md](https://github.com/NeHeGL/LLM-Training-Studio/blob/${VER}/CHANGELOG.md)"
+          } > release-notes.md
+
+      - name: Dry run - attach the bundle and notes to this run
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-${{ inputs.version }}
+          path: |
+            ${{ env.ZIP_NAME }}
+            release-notes.md
+
+      - name: Create the tag and the GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2.3.2
         with:
           tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
           name: "LLM Training Studio ${{ inputs.version }}"
-          generate_release_notes: true
-          body: |
-            ## What's New in ${{ inputs.version }}
-
-            See the [Changelog in README.md](https://github.com/NeHeGL/LLM-Training-Studio/blob/${{ inputs.version }}/README.md#changelog) for full release notes.
-
-            ---
-
-            ### Quick Start
-            1. Download **Source code (zip)** below
-            2. Extract anywhere on your machine
-            3. Run `install.bat` once to set up dependencies
-            4. Launch with `start_web.bat` (browser) or `start_app.bat` (desktop window)
+          body_path: release-notes.md
+          files: ${{ env.ZIP_NAME }}
