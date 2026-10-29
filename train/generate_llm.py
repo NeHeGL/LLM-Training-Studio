@@ -1649,13 +1649,44 @@ def main():
     # offload_dir issue that occurs when device_map="auto" splits across GPU+CPU).
     # A 7B fp16/bf16 model is ~14 GB; add a 2 GB headroom buffer.
     # If VRAM is insufficient, fall back to CPU cleanly.
-    _model_vram_needed_gb = 16  # conservative estimate for 7B fp16/bf16
-    if cuda and gi["vram_gb"] >= _model_vram_needed_gb:
+    # Sized from the real model (it used to assume a 7B model: 16 GB). Disk, GPU memory and RAM are all
+    # checked up front so an export that cannot work stops here with a clear message instead of crashing
+    # partway through (or filling the disk).
+    import preflight
+    _params_b = preflight.estimate_params_b(BASE_MODEL)
+    _weights_gb = _params_b * 2.0                      # bf16/fp16 weights
+
+    def _stop(msg):
+        print(f"\n[export] ERROR: {msg}")
+        _restore_sleep()
+        sys.exit(1)
+
+    # Disk: merged weights + f16 GGUF + quantized file at the peak (~4.7x the weights); the merged copy is
+    # deleted afterwards. SafeTensors-only exports need ~1.2x.
+    _need_disk = _weights_gb * (4.7 if args.do_gguf else 1.2) + 2.0
+    _free_disk = preflight.free_disk_gb(export_dir)
+    if _free_disk < _need_disk:
+        _stop(f"exporting {BASE_MODEL} (~{_params_b:.1f}B parameters) needs about {_need_disk:.0f} GB of free disk space "
+              f"while it works, but only {_free_disk:.0f} GB is free where the model is saved ({export_dir}).\n"
+              f"[export] Free up space (the trained adapter in {lora_dir} is kept) and try again.")
+
+    _mem = preflight.gpu_memory() if cuda else None
+    _ram_total, _ram_avail = preflight.ram_gb()
+    if _mem and _mem["free0"] >= _weights_gb + 2.0:
         _merge_device_map = "cuda:0"
         _merge_device_label = f"GPU ({gi['name']})"
-    else:
+    elif _ram_avail is None or _ram_avail >= _weights_gb * 1.3 + 2.0:
         _merge_device_map = None   # CPU
-        _merge_device_label = "CPU (insufficient VRAM for GPU merge)"
+        _merge_device_label = "CPU (not enough free GPU memory for the merge)" if cuda else "CPU"
+        if cuda:
+            print(f"[export] Note: merging needs ~{_weights_gb + 2:.0f} GB of free GPU memory"
+                  f"{'' if not _mem else f' ({_mem['free0']:.0f} GB free)'}; merging on the CPU instead (slower).")
+    else:
+        _stop(f"merging the trained adapter into {BASE_MODEL} (~{_params_b:.1f}B parameters) needs about "
+              f"{_weights_gb + 2:.0f} GB of free GPU memory or about {_weights_gb * 1.3 + 2:.0f} GB of free RAM, but this "
+              f"machine has {(_mem['free0'] if _mem else 0):.0f} GB of GPU memory free and {_ram_avail:.0f} GB of RAM available.\n"
+              f"[export] Your trained adapter is safe in {lora_dir}. Close other programs and try again, "
+              "or run the export on a machine with more memory.")
 
     print(f"[export] Loading base model in {'bfloat16' if bf16 else 'float16'} for merge...")
     # Check if base model is already cached locally

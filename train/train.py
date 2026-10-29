@@ -603,6 +603,8 @@ def parse_args():
                         "shorter seq-len (1024), and CPU-offloads the optimizer. "
                         "Slowest but uses the least RAM — use if you are crashing "
                         "due to out-of-memory errors.")
+    p.add_argument("--allow-cpu",   dest="allow_cpu", action="store_true",
+                   help="Train on the CPU when no usable NVIDIA GPU is found (50-100x slower; off by default).")
     p.add_argument("--rslora",      action="store_true",
                    help="Rank-stabilised LoRA: scale alpha/sqrt(r) so higher ranks keep learning. "
                         "Alpha is re-derived so the starting strength matches plain LoRA.")
@@ -677,31 +679,81 @@ def make_masked_dataset(raw_dataset, tokenizer, max_len):
 
 
 def _estimate_params_b(model_id):
-    """Parameter count in billions: local safetensors headers / Hub metadata, then name, then 7."""
-    import json as _j, struct as _st, glob as _g
-    try:
-        if os.path.isdir(model_id):
-            total = 0
-            for f in _g.glob(os.path.join(model_id, "*.safetensors")):
-                with open(f, "rb") as fh:
-                    hdr = _j.loads(fh.read(_st.unpack("<Q", fh.read(8))[0]))
-                for k, v in hdr.items():
-                    if k != "__metadata__" and v.get("dtype") in ("F16", "BF16", "F32"):
-                        n = 1
-                        for d in v["shape"]:
-                            n *= d
-                        total += n
-            if total:
-                return total / 1e9
-        else:
-            from huggingface_hub import model_info
-            st = getattr(model_info(model_id), "safetensors", None)
-            if st and getattr(st, "total", 0):
-                return st.total / 1e9
-    except Exception:
-        pass
-    m = _re.findall(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", os.path.basename(model_id.rstrip("/\\")).lower().replace("-", " ").replace("_", " "))
-    return float(m[-1]) if m else 7.0
+    """Parameter count in billions (see preflight.estimate_params_b)."""
+    import preflight
+    return preflight.estimate_params_b(model_id)
+
+
+def _preflight(base_model, lora_out, cuda, use_4bit, allow_cpu):
+    """Refuse early, with a clear message, if this run cannot work on this machine.
+
+    Runs BEFORE anything is deleted (--fresh), so a refused run never destroys an existing adapter.
+    (The Studio's model list already greys out catalog models that are too big; this also covers custom
+    models, command-line runs and memory that other programs are holding, and avoids a long download or
+    load that ends in a CUDA traceback.)  Returns the free GPU memory in GB (single GPU) or None.
+    """
+    import preflight
+
+    def _stop(msg):
+        print(f"\n[train] ERROR: {msg}")
+        _restore_sleep()
+        sys.exit(1)
+
+    if not cuda and not allow_cpu:
+        _stop("no NVIDIA GPU with working CUDA was found, so training cannot run here.\n"
+              "[train] Install or update the NVIDIA driver, run install.bat again, then restart the Studio.\n"
+              "[train] (Advanced: --allow-cpu trains on the CPU, which is 50-100x slower.)")
+    model_params_b = _estimate_params_b(base_model)
+    model_vram_4bit = model_params_b * 0.6
+    model_vram_fp16 = model_params_b * 2.0
+    free0 = None
+    if cuda:
+        _bad = preflight.cuda_sanity()
+        if _bad:
+            _stop(_bad)
+        _mem = preflight.gpu_memory()
+        if _mem:
+            if _mem["n"] > 1:
+                print(f"[train] {_mem['n']} GPUs detected. The model goes on GPU 0 when it fits there, otherwise it is "
+                      f"spread across the GPUs (multi-GPU training is best-effort).")
+            _need_gb = (model_vram_4bit if use_4bit else model_vram_fp16) + 1.0   # weights + LoRA/optimizer floor
+            _mode = "4-bit (QLoRA)" if use_4bit else "full precision"
+            _held = _mem["other_gb"] > 1.5
+            if _need_gb > _mem["free_all"]:
+                if _held:
+                    _stop(f"{base_model} (~{model_params_b:.1f}B parameters) needs about {_need_gb:.0f} GB of GPU memory to "
+                          f"train in {_mode}, but only {_mem['free_all']:.0f} GB is free ({_mem['total_all']:.0f} GB total; "
+                          f"other programs are using {_mem['other_gb']:.0f} GB).\n"
+                          "[train] Close other programs that use the GPU (games, browsers, a model loaded in Ollama or "
+                          "LM Studio) and try again, or pick a smaller model.")
+                _extra = ("\n[train]   - Switch Quantization to 4-bit (QLoRA), which needs about a quarter of the memory"
+                          if not use_4bit else "")
+                _stop(f"{base_model} (~{model_params_b:.1f}B parameters) needs about {_need_gb:.0f} GB of GPU memory to "
+                      f"train in {_mode}, but this GPU has {_mem['total_all']:.0f} GB.\n"
+                      "[train] Try one of these:\n"
+                      "[train]   - Pick a smaller model (the Studio's model list greys out the ones that don't fit)"
+                      + _extra + "\n[train]   - Use a graphics card with more memory")
+            if _need_gb + 2.0 > _mem["free_all"]:
+                print(f"[train] WARNING: tight fit ({_need_gb:.0f} GB needed, {_mem['free_all']:.0f} GB free). If it runs "
+                      f"out of memory, lower Max seq length or use --low-mem.")
+            if _held:
+                print(f"[train] Note: other programs are using {_mem['other_gb']:.0f} GB of this GPU; planning around the "
+                      f"{_mem['free0']:.0f} GB that is free.")
+            free0 = _mem["free0"] if _mem["n"] == 1 else None
+
+    # Disk: the model download (first use) and the training output
+    if not preflight.model_is_cached(base_model):
+        _dl_gb = model_params_b * 2.0 + 2.0
+        _cache = preflight.hf_cache_dir()
+        _free_d = preflight.free_disk_gb(_cache)
+        if _free_d < _dl_gb:
+            _stop(f"downloading {base_model} needs about {_dl_gb:.0f} GB of free disk space, but only {_free_d:.0f} GB is "
+                  f"free on the drive that holds the model cache ({_cache}).\n"
+                  "[train] Free up space, or move the cache to a bigger drive by setting the HF_HOME environment variable.")
+    _free_out = preflight.free_disk_gb(lora_out)
+    if _free_out < 2.0:
+        _stop(f"only {_free_out:.1f} GB of disk space is free where the trained adapter is saved; need at least 2 GB.")
+    return free0
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -881,6 +933,9 @@ def main():
     LORA_OUT_MODEL = os.path.join(LORA_BASE, _dir_name)
 
     # ── Execute deferred --fresh wipe now that LORA_OUT_MODEL is known ───────
+    # Pre-flight BEFORE anything is deleted: a refused run must never destroy an existing adapter.
+    _preflight_free_vram = _preflight(BASE_MODEL, LORA_OUT_MODEL, cuda, use_4bit, args.allow_cpu)
+
     if _do_fresh_wipe:
         _wipe_lora_checkpoints(LORA_OUT_MODEL)
 
@@ -1002,6 +1057,11 @@ def main():
     # Rule of thumb: model_gb_4bit ≈ model_params_b * 0.6
     model_vram_4bit = model_params_b * 0.6
     model_vram_fp16 = model_params_b * 2.0
+
+    # Plan batch size / sequence length around the GPU memory that is actually free (pre-flight ran earlier,
+    # before anything was deleted).
+    if _preflight_free_vram is not None:
+        vram_gb = min(vram_gb, _preflight_free_vram)
 
     # Auto-scale batch size and gradient accumulation based on available VRAM
     # after subtracting model weight VRAM. Effective batch = batch * grad_accum = 8 target.
@@ -1133,11 +1193,7 @@ def main():
     print()
 
     if not cuda:
-        print("[train] WARNING: No CUDA GPU detected. Training on CPU will be extremely slow.")
-        print("[train] Consider using a machine with a CUDA-capable GPU.")
-        inp = input("[train] Continue anyway? (y/N): ").strip().lower()
-        if inp != "y":
-            sys.exit(0)
+        print("[train] WARNING: No CUDA GPU detected (--allow-cpu). Training on CPU will be extremely slow.")
 
     # ── 1. Validate model exists on HuggingFace ───────────────────────────────
     print(f"[train] Checking model exists: {BASE_MODEL}")
@@ -1745,4 +1801,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _e:
+        if type(_e).__name__ == "OutOfMemoryError" or "out of memory" in str(_e).lower():
+            try:
+                _restore_sleep()
+            except Exception:
+                pass
+            print("\n[train] ERROR: the GPU ran out of memory.")
+            print("[train] Try these, in order:")
+            print("[train]   1. Lower Max seq length (2048 -> 1024 -> 512)")
+            print("[train]   2. Use 4-bit quantization (QLoRA) instead of full precision")
+            print("[train]   3. Set the batch size to 1 (or pass --low-mem, which applies several of these)")
+            print("[train]   4. Close other programs that use the GPU (games, browsers, other AI tools)")
+            print("[train]   5. Pick a smaller model")
+            print(f"[train] (technical detail: {type(_e).__name__}: {str(_e)[:160]})")
+            sys.exit(1)
+        raise

@@ -113,6 +113,7 @@ Training time depends on your dataset, model and GPU: a few minutes for a small 
 | Flag            | Effect                                                        |
 |-----------------|---------------------------------------------------------------|
 | `--epochs 5`    | Training passes (default: automatic, 3-10 chosen from your dataset size) |
+| `--allow-cpu`   | Train on the CPU when no NVIDIA GPU is found (50-100x slower; refused by default) |
 | `--batch 4`     | Larger batch (watch VRAM)                                     |
 | `--no-4bit`     | Full FP16/BF16 — needs more VRAM                              |
 | `--grad-ckpt`   | Save ~3 GB VRAM at ~40% slower speed                          |

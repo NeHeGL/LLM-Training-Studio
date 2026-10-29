@@ -1958,88 +1958,9 @@ def create_app():
             is_fresh = request.args.get('fresh') == '1'
             if is_fresh:
                 cmd.append('--fresh')
-                # ── Wipe the active model's LoRA checkpoints before a fresh start ─
-                # Only wipes checkpoint-N/ subdirs and adapter files from the specific
-                # LoRA subdir that matches the current model name + base model.
-                # Other LoRA subdirs (e.g. for a different base model size) are kept.
-                # .gguf and .ollama files are NOT deleted — see note below.
-                import shutil as _shutil_fs
-                import re as _re_fresh
-                _active_name = get_active_name()
-                _safe_n = _safe_name(_active_name)
-                _active_model_cfg = load_model_config(_active_name)
-                _active_base = _active_model_cfg.get("base_model", "")
-
-                # Compute the same subdir name that train.py would use:
-                #   {modelname_lower}-{size}-{family}
-                # This must match train.py's _dir_name computation exactly.
-                _name_part = _re_fresh.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', _active_name).strip(". ").lower() or "model"
-
-                def _fresh_model_family(base_model):
-                    parts = base_model.split("/")
-                    mp = parts[-1] if len(parts) > 1 else parts[0]
-                    n = _re_fresh.sub(r'[-_]?\d+\.?\d*[Bb][\w.]*.*$', '', mp)
-                    n = _re_fresh.sub(r'[-_]?(instruct|chat|hf|base|it|v\d[\w.]*)$', '', n, flags=_re_fresh.IGNORECASE)
-                    n = n.strip('-_').lower().replace('_', '-')
-                    return _re_fresh.sub(r'-+', '-', n).strip('-')
-
-                _size_m = _re_fresh.search(r'[-_/](\d+(?:\.\d+)?[Bb])', _active_base)
-                _size_t = _size_m.group(1).lower() if _size_m else ""
-                _fam_t  = _fresh_model_family(_active_base)
-                _size_fam = f"{_size_t}-{_fam_t}" if (_size_t and _fam_t) else (_size_t or _fam_t or "base")
-                _lora_subdir_name = f"{_name_part}-{_size_fam}"
-
-                _lora_base_dir   = _model_lora_dir(_active_name)
-                _lora_target_dir = os.path.join(_lora_base_dir, _lora_subdir_name)
-
-                # Wipe only the matching LoRA subdir contents (checkpoints + adapter files).
-                # Other subdirs in lora/ (e.g. from a different base model) are preserved.
-                _ADAPTER_FILES = {
-                    "adapter_config.json", "adapter_model.safetensors",
-                    "adapter_model.bin", "adapter_model.pt",
-                    "tokenizer.json", "tokenizer_config.json",
-                    "special_tokens_map.json", "chat_template.jinja",
-                    "training_args.bin", "README.md", ".training_info.json",
-                }
-                if os.path.isdir(_lora_target_dir):
-                    _fresh_removed = []
-                    for _fn in os.listdir(_lora_target_dir):
-                        _fp = os.path.join(_lora_target_dir, _fn)
-                        if _fn.startswith("checkpoint-") and os.path.isdir(_fp):
-                            try:
-                                _shutil_fs.rmtree(_fp)
-                                _fresh_removed.append(_fn)
-                            except Exception as _e:
-                                print(f"[studio] Could not delete checkpoint {_fp}: {_e}")
-                        elif os.path.isfile(_fp) and _fn in _ADAPTER_FILES:
-                            try:
-                                os.remove(_fp)
-                                _fresh_removed.append(_fn)
-                            except Exception as _e:
-                                print(f"[studio] Could not delete {_fp}: {_e}")
-                    if _fresh_removed:
-                        print(f"[studio] Fresh start — cleared {len(_fresh_removed)} item(s) from: {_lora_target_dir}")
-                    else:
-                        print(f"[studio] Fresh start — nothing to clear in: {_lora_target_dir}")
-                else:
-                    print(f"[studio] Fresh start — LoRA subdir not found (will be created by training): {_lora_target_dir}")
-
-                # Note: .gguf and .ollama files in models/<ModelName>/gguf/ are NOT
-                # deleted on fresh start. They are only replaced when generate_llm.py
-                # produces a new export with the same filename. Deleting them here
-                # would destroy a working export just because the user wants to retrain.
-
-                # Legacy location: train/popai_lora/<ModelName>_*/
-                _legacy_lora_base = os.path.join(TRAIN_DIR, "popai_lora")
-                if os.path.isdir(_legacy_lora_base):
-                    for _entry in os.listdir(_legacy_lora_base):
-                        _sub = os.path.join(_legacy_lora_base, _entry)
-                        if os.path.isdir(_sub) and _entry.lower().startswith(_safe_n.lower() + "_"):
-                            try:
-                                _shutil_fs.rmtree(_sub)
-                                print(f"[studio] Fresh start — deleted legacy LoRA dir: {_sub}")
-                            except Exception as _e:
-                                print(f"[studio] Could not delete legacy LoRA dir {_sub}: {_e}")
+                # train.py deletes the old adapter itself, but only AFTER its pre-flight checks (GPU memory,
+                # RAM, disk) pass, so a refused "Reset + Train" never destroys an existing trained adapter.
+                # (.gguf and .ollama exports are never deleted on a fresh start.)
 
             try:
                 proc = subprocess.Popen(

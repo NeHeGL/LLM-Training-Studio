@@ -46,6 +46,25 @@ Hugging Face token under *Model Settings > Advanced* can make downloads faster.
 
 ## Training
 
+**"needs about N GB of GPU memory ... but only M GB is free"**
+The Studio checks before it starts, so you don't wait for a crash. If it says other programs are using
+GPU memory, close them: games, browsers with hardware acceleration, and any model loaded in Ollama or
+LM Studio (they keep a model in GPU memory for several minutes after you chat). Otherwise the model is
+simply too big for your card: pick a smaller one, or use 4-bit quantization.
+
+**"downloading ... needs about N GB of free disk space"**
+Models are stored in the Hugging Face cache on your user drive (`C:\Users\<you>\.cache\huggingface`).
+Free up space there, or move the cache to a bigger drive by setting the `HF_HOME` environment variable
+(for example `setx HF_HOME D:\hf-cache`) and restarting the Studio.
+
+**"no NVIDIA GPU with working CUDA was found"**
+Training needs an NVIDIA GPU. Update the driver, run `install.bat` again and restart the Studio. If the
+card is fine but this message appears, check `nvidia-smi` works in a command window. (Advanced:
+`python train/train.py --allow-cpu` trains on the CPU, 50-100x slower.)
+
+**"Reset + Train" was refused: did I lose my trained model?**
+No. Nothing is deleted until the checks pass, so a refused run leaves your existing adapter untouched.
+
 **"CUDA out of memory"**
 Try these in order:
 1. Lower **Max seq length** (2048 -> 1024 -> 512).
@@ -66,6 +85,15 @@ That's overfitting: too many passes over too little data. Set a lower number of 
 Press **Train** again; it resumes from the last checkpoint. Use **Reset + Train** to start over.
 
 ## Exporting
+
+**"merging the trained adapter ... needs about N GB of free GPU memory or about M GB of free RAM"**
+Merging loads the full-size model (about 2 GB per billion parameters) on the GPU, or on the CPU if the
+GPU is too small. This message means neither has room right now. Close other programs (see above), or
+export on a machine with more memory. Your trained adapter is safe in `models/<ModelName>/lora/`.
+
+**"exporting ... needs about N GB of free disk space"**
+An export briefly needs about 4.7x the model's size on disk (merged weights, an f16 copy and the final
+file; the extras are deleted at the end). Free up space on the drive that holds the `models` folder.
 
 **"GGUF conversion failed"**
 Read the last lines of the log. The merged model is kept in `models/<ModelName>/gguf/` so you
