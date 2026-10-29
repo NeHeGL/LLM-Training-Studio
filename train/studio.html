@@ -115,6 +115,8 @@
                 <option value="auto">Auto (recommended)</option>
                 <option value="f16">f16 — lossless, ~14 GB</option>
                 <option value="q8_0">q8_0 — near-lossless, ~8 GB</option>
+                <option value="q6_k">q6_k — nearly lossless, ~6 GB</option>
+                <option value="q5_k_m">q5_k_m — very high quality, ~5 GB</option>
                 <option value="q4_k_m">q4_k_m — good quality, ~4 GB</option>
                 <option value="iq4_xs">iq4_xs — imatrix-calibrated, ~3.6 GB</option>
                 <option value="q4_0">q4_0 — smallest, ~4 GB</option>
@@ -2373,6 +2375,8 @@ function _updateExportHint() {
   const typeLabels = {
     f16:    'f16 (lossless, ~14gb)',
     q8_0:   'q8_0 (near-lossless, ~8gb)',
+    q6_k:   'q6_k (nearly lossless, ~6gb)',
+    q5_k_m: 'q5_k_m (very high quality, ~5gb)',
     q4_k_m: 'q4_k_m (good quality, ~4gb)',
     iq4_xs: 'iq4_xs (imatrix-calibrated, ~3.6gb)',
     q4_0:   'q4_0 (smallest, ~4gb)',
@@ -2502,7 +2506,7 @@ function openGenerateConsole(btn) {
   const _resolvedGgufType = ggufType !== 'auto' ? ggufType :
     ((_catalogData && _catalogData.auto_gguf_type) || 'q4_k_m');
   const _isImatrix = (_resolvedGgufType === 'iq4_xs');
-  const _isTwoStep = (_resolvedGgufType === 'q4_k_m' || _resolvedGgufType === 'q4_0' || _isImatrix);
+  const _isTwoStep = (['q4_k_m','q5_k_m','q6_k','q4_0'].includes(_resolvedGgufType) || _isImatrix);
   let _gcPhase = 0;  // 0=connecting, 1=merging, 2=saving, 3=converting/f16, 4=imatrix(iq4_xs only), 5=quantizing, 6=registering
 
   let _gcExportFolder = '';  // populated when generate_llm.py prints the Watch line
