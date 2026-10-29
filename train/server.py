@@ -2161,6 +2161,8 @@ def create_app():
             # plain default (q4_k_m — portable, for sharing with others).
             if gguf_type:
                 cmd += ["--gguf-type", gguf_type]
+            if request.args.get("imatrix") == "1":
+                cmd.append("--imatrix")   # calibrate q4/q5/q6 on the training data (iq4_xs always does)
             # Pass --keep-safetensors if requested
             if keep_safetensors == "1":
                 cmd.append("--keep-safetensors")

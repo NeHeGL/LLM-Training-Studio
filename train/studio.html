@@ -122,6 +122,10 @@
                 <option value="q4_0">q4_0 — smallest, ~4 GB</option>
               </select>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:0 2px;font-size:0.72rem;color:#94a3b8;">
+              <input type="checkbox" id="export-imatrix" style="width:13px;height:13px;accent-color:#38bdf8;flex-shrink:0;">
+              <span>Better quality (slower export) <span style="color:#6b7fa0;">&mdash; calibrates the 4/5/6-bit files on your training data. iq4_xs always does this.</span></span>
+            </label>
             <div id="export-gguf-hint" style="font-size:0.68rem;color:#6b7fa0;line-height:1.4;padding:0 2px;"></div>
             <div id="export-result-bar" style="display:none;padding:5px 8px;border-radius:5px;font-size:0.72rem;"></div>
           </div>
@@ -2486,6 +2490,8 @@ function openGenerateConsole(btn) {
 
   // Build stream URL — GGUF only, SafeTensors always deleted (chat server uses GGUF directly)
   const streamParams = new URLSearchParams({ gguf_type: ggufType });
+  const _imEl = document.getElementById('export-imatrix');
+  if (_imEl && _imEl.checked) streamParams.set('imatrix', '1');
   _generateEvtSource = new EventSource(API + '/run/generate/stream?' + streamParams.toString());
 
   // Show what's being exported
@@ -2505,7 +2511,8 @@ function openGenerateConsole(btn) {
   // auto_gguf_type in /model-catalog — same value _updateExportHint() uses).
   const _resolvedGgufType = ggufType !== 'auto' ? ggufType :
     ((_catalogData && _catalogData.auto_gguf_type) || 'q4_k_m');
-  const _isImatrix = (_resolvedGgufType === 'iq4_xs');
+  const _wantIm = !!(document.getElementById('export-imatrix') || {}).checked;
+  const _isImatrix = (_resolvedGgufType === 'iq4_xs' || (_wantIm && ['q4_k_m','q5_k_m','q6_k','q4_0'].includes(_resolvedGgufType)));
   const _isTwoStep = (['q4_k_m','q5_k_m','q6_k','q4_0'].includes(_resolvedGgufType) || _isImatrix);
   let _gcPhase = 0;  // 0=connecting, 1=merging, 2=saving, 3=converting/f16, 4=imatrix(iq4_xs only), 5=quantizing, 6=registering
 
