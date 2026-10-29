@@ -30,7 +30,7 @@ Rough guide for **4-bit training**:
 | 12 GB | up to ~8B (Qwen3 8B, OLMo 3 7B) | 9B |
 | 16 GB | 8-9B | 14B |
 | 24 GB | 14B | 27B |
-| 32 GB | 14B at full precision, 27B-32B in 4-bit | |
+| 32 GB | up to ~13B at full precision (BF16); 14B-32B in 4-bit | |
 | 48 GB | 32B | |
 | 80-96 GB | 32B+ at full precision, 70B-class in 4-bit | |
 

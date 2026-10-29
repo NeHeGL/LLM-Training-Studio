@@ -52,20 +52,20 @@ Run `install.bat` once. It will:
 2. Install all Python dependencies from `requirements.txt`
 3. Download llama.cpp's tools into `tools/llama/` (required for GGUF export), plus a GPU-accelerated build (about 600 MB, one time) into `tools/llama-cuda/` when your card and driver support it. It makes the chat tester about 3x faster and speeds up the *Better quality* export option. Skip it with `set LLM_SKIP_CUDA_LLAMA=1` before running `install.bat`; everything still works without it
 
-> **GPU required:** An NVIDIA GPU with CUDA support is required for practical training.  
-> CPU-only mode is technically possible but training is 50–100× slower and not recommended.  
+> **GPU required:** an NVIDIA graphics card is required for practical training (RTX 20-series or newer
+> recommended; GTX 10-series and Titan V also work, with an older PyTorch that `install.bat` picks for you).
+> CPU-only mode is technically possible but 50–100× slower and not recommended.
 > `bitsandbytes` (4-bit QLoRA) requires CUDA — it will not work without an NVIDIA GPU.
 >
-> **VRAM guide:**
-> | VRAM      | Recommended model        | Notes                                       |
-> |-----------|--------------------------|---------------------------------------------|
-> | 6–8 GB    | Phi-2 (2.7B) or smaller  | Batch=1, seq=1024                           |
-> | 8–12 GB   | Qwen 3B                  | 4-bit QLoRA only                            |
-> | 12–16 GB  | Qwen 7B ⭐               | 4-bit QLoRA recommended                     |
-> | 16–23 GB  | Qwen 7B ⭐               | 4-bit QLoRA (FP16 not possible — too tight) |
-> | 24–47 GB  | Qwen 14B                 | Full BF16/FP16 or 4-bit                     |
-> | 48+ GB    | Qwen 32B                 | Full precision, larger batch                |
-> | 96+ GB    | Qwen 72B                 | Multi-GPU recommended                       |
+> **VRAM guide** (4-bit training; see [Choosing a model and settings](docs/choosing-a-model-and-settings.md)):
+> | VRAM      | Comfortable model                          | Notes                                        |
+> |-----------|--------------------------------------------|----------------------------------------------|
+> | 8 GB      | up to ~4B (Qwen3 4B, Phi-4-mini)           | 7–8B possible with `--low-mem`               |
+> | 12 GB     | up to ~8B (Qwen3 8B, OLMo 3 7B)            | 4-bit QLoRA                                  |
+> | 16 GB     | 8–9B                                       | 14B possible                                 |
+> | 24 GB     | 14B                                        | 27B possible; full BF16 up to ~8B            |
+> | 32 GB     | up to ~13B full precision, 14–32B in 4-bit |                                              |
+> | 48 GB+    | 32B and up                                 | 80–96 GB: 70B-class in 4-bit                 |
 
 ---
 
@@ -106,13 +106,13 @@ python train/train.py
 ```
 
 Output goes to `models/<ModelName>/lora/<ModelName>-<size>-<family>/`.  
-Training takes ~1–4 hours on a GPU depending on dataset size and model.
+Training time depends on your dataset, model and GPU: a few minutes for a small dataset on a recent card, up to hours for large ones.
 
 **Useful flags:**
 
 | Flag            | Effect                                                        |
 |-----------------|---------------------------------------------------------------|
-| `--epochs 5`    | More training passes (default: 3)                             |
+| `--epochs 5`    | Training passes (default: automatic, 3-10 chosen from your dataset size) |
 | `--batch 4`     | Larger batch (watch VRAM)                                     |
 | `--no-4bit`     | Full FP16/BF16 — needs more VRAM                              |
 | `--grad-ckpt`   | Save ~3 GB VRAM at ~40% slower speed                          |
