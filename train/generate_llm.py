@@ -755,6 +755,19 @@ def _patch_gguf_metadata(gguf_path, model_name, system_prompt, base_model, ai_ow
         return False
 
 
+def _llama_cuda_env():
+    """Environment for the llama.cpp CUDA build: keep the driver's JIT kernel cache inside the project.
+
+    The CUDA 12.4 build has no native Blackwell kernels, so the driver compiles them on first load (~20 s).
+    The cache normally survives reboots, but not on machines that reset the user profile (rented/cloud
+    instances), so point it at tools/llama-cuda/ and lift the size cap. A value the user set wins.
+    """
+    env = os.environ.copy()
+    env.setdefault("CUDA_CACHE_PATH", os.path.join(ROOT, "tools", "llama-cuda", ".cuda-cache"))
+    env.setdefault("CUDA_CACHE_MAXSIZE", str(4 * 1024 ** 3))
+    return env
+
+
 def _find_llama_tool(exe_name, prefer_cuda=False):
     """Locate a llama.cpp CLI tool (llama-quantize, llama-imatrix, ...) by name.
 
@@ -858,6 +871,7 @@ def _generate_imatrix(f16_gguf_path):
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    env=_llama_cuda_env() if on_gpu else None,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 )
                 for line in proc.stdout:

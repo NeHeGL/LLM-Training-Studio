@@ -577,7 +577,10 @@ pip install -r requirements.txt
 
 Full history: **[CHANGELOG.md](CHANGELOG.md)**
 
-**Latest: 2026-10-29 — v1.2.0**
+**Latest: 2026-10-31 — v1.2.1**
+- RTX 50-series cards on the CUDA 12.4 llama.cpp build no longer pay the ~20 s first-load kernel compile after every restart: the cache is now kept in the project folder (`tools/llama-cuda/.cuda-cache`), which matters on instances that reset the user profile on reboot.
+
+**Previous: 2026-10-29 — v1.2.0**
 - Training now learns your facts: answer-only loss, and an automatic schedule that gives small datasets enough steps (the old defaults reproduced none of the trained answers on a 45-pair set).
 - Every model uses its own chat template end to end, so the exported GGUF and the Ollama model are prompted exactly as they were trained.
 - A verified, ungated model catalog (checked against Hugging Face), plus optional custom models and a Hugging Face token.

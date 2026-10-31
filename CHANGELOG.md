@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-10-31 — v1.2.1: GPU kernel cache kept with the project
+
+- **No repeat of the first-load pause on RTX 50-series cards.** On the CUDA 12.4 llama.cpp build, Blackwell kernels are compiled by the NVIDIA driver the first time a model loads (about 20 s on an RTX 5090). The driver normally caches the result, so it happens once and not again after a reboot. But on machines that reset the user profile or disk on restart (rented or cloud GPU instances, some managed PCs) that cache is lost and the pause came back every time. The chat tester and the imatrix export step now keep the cache in `tools/llama-cuda/.cuda-cache` (size cap raised to 4 GB), so it survives restarts as long as the project folder does. Measured on an RTX 5090: 16 s on the first load, 0.5 s on the next. Your own `CUDA_CACHE_PATH` / `CUDA_CACHE_MAXSIZE` settings are respected.
+- **If you still see it every time:** the cache is turned off (`CUDA_CACHE_DISABLE=1`), or the project folder itself is wiped on restart. A driver that reports CUDA 13.4 or newer avoids the compile entirely, because the installer then picks the 13.4 build with native Blackwell kernels.
+
 ### 2026-10-29 — v1.2.0: Modern Training Pipeline, Verified Ungated Catalog, Pre-flight Checks, GPU-Accelerated llama.cpp
 
 - **Answer-only loss**: the model is trained on its replies, not the system prompt/question.

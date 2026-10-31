@@ -307,7 +307,13 @@ def load_model_gguf_bg(gguf_path):
             print(f"[server] Loading GGUF: {gguf_path}")
             print(f"[server] {' '.join(cmd)}")
             try:
-                _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
+                env = os.environ.copy()
+                if is_cuda:
+                    # Keep the driver's JIT kernel cache in the project: the CUDA 12.4 build compiles Blackwell
+                    # kernels on first load (~20 s), and a profile-resetting instance would lose the default cache.
+                    env.setdefault("CUDA_CACHE_PATH", os.path.join(ROOT, "tools", "llama-cuda", ".cuda-cache"))
+                    env.setdefault("CUDA_CACHE_MAXSIZE", str(4 * 1024 ** 3))
+                _llama_proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT, env=env)
             except OSError as e:          # the executable itself cannot run (corrupt, blocked by antivirus, ...)
                 last_error = str(e)
                 print(f"[server] could not launch llama-server ({device}): {e}" + ("; trying the CPU build" if is_cuda else ""))
