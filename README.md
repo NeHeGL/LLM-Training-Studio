@@ -545,7 +545,8 @@ To install manually:
 
 ```
 # PyTorch (match your CUDA version — see https://pytorch.org/get-started/locally/):
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# cu130 for drivers on CUDA 13.0+; use cu128 for drivers on CUDA 12.8-12.9, cu126 for older drivers and GTX 10xx/Titan V
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # All other dependencies:
 pip install -r requirements.txt
