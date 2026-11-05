@@ -359,10 +359,9 @@
           </div>
           <!-- PyTorch index URL — auto-detected from GPU, not shown to user -->
           <select id="upd-torch-index" style="display:none;">
-            <option value="https://download.pytorch.org/whl/cu128">CUDA 12.8+</option>
-            <option value="https://download.pytorch.org/whl/cu124">CUDA 12.4–12.7</option>
-            <option value="https://download.pytorch.org/whl/cu121">CUDA 12.1–12.3</option>
-            <option value="https://download.pytorch.org/whl/cu118">CUDA 11.8</option>
+            <option value="https://download.pytorch.org/whl/cu130">CUDA 13.0+</option>
+            <option value="https://download.pytorch.org/whl/cu128">CUDA 12.8–12.9</option>
+            <option value="https://download.pytorch.org/whl/cu126">CUDA 12.6–12.7</option>
             <option value="https://download.pytorch.org/whl/cpu">CPU only</option>
           </select>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -432,7 +431,8 @@ let examples   = [];   // [{id, question, answer, saved}]
 let currentIdx = -1;
 let nextId     = 1;
 let dirty      = false;
-let _detectedCudaCompute = '';   // e.g. "12.4" — set by loadSystemInfo, used by _autoSelectTorchIndex
+let _detectedCudaCompute = '';   // GPU SM compute capability, e.g. "12.0" — set by loadSystemInfo
+let _detectedDriverCuda  = '';   // CUDA version the driver supports, e.g. "13.5" — used by _autoSelectTorchIndex
 
 // ── Pipeline mutual exclusion ─────────────────────────
 // Tracks which task is currently running so all other buttons are disabled.
@@ -1770,6 +1770,7 @@ async function loadSystemInfo() {
 
     // Cache CUDA compute version for _autoSelectTorchIndex (used in Updates tab)
     if (s.cuda_compute) _detectedCudaCompute = s.cuda_compute;
+    if (s.driver_cuda)  _detectedDriverCuda  = s.driver_cuda;
 
     el.innerHTML = html || 'No data available.';
 
@@ -3036,25 +3037,21 @@ async function restartServer() {
 }
 
 function _autoSelectTorchIndex() {
-  // Pick the right PyTorch index URL based on the CUDA compute version cached
-  // from /system-info (set in loadSystemInfo → _detectedCudaCompute).
-  // Falls back to cu128 (latest) if CUDA was not detected.
+  // Pick the PyTorch index URL from the driver's CUDA version (_detectedDriverCuda)
+  // and the GPU's compute capability (_detectedCudaCompute), mirroring tools/select_torch.ps1.
+  // Leaves the default (cu130) if nothing was detected.
   try {
-    const cudaVer = _detectedCudaCompute;
-    if (!cudaVer) return;  // no CUDA GPU — leave default (cu128)
-    const parts = cudaVer.split('.');
-    const major = parseInt(parts[0]) || 0;
-    const minor = parseInt(parts[1]) || 0;
+    if (!_detectedDriverCuda) return;
+    const [dMaj, dMin] = _detectedDriverCuda.split('.').map(n => parseInt(n) || 0);
+    const drv = dMaj * 100 + dMin;
+    const cc  = parseFloat(_detectedCudaCompute) || 0;
     const sel = document.getElementById('upd-torch-index');
-    if (major < 12 || (major === 12 && minor < 1)) {
-      sel.value = 'https://download.pytorch.org/whl/cu118';
-    } else if (major === 12 && minor < 4) {
-      sel.value = 'https://download.pytorch.org/whl/cu121';
-    } else if (major === 12 && minor < 8) {
-      sel.value = 'https://download.pytorch.org/whl/cu124';
-    } else {
-      sel.value = 'https://download.pytorch.org/whl/cu128';
-    }
+    let tag;
+    if (cc && cc < 7.5)      tag = 'cu126';   // Pascal/Volta: only cu126 builds still cover them
+    else if (drv >= 1300)    tag = 'cu130';
+    else if (drv >= 1208)    tag = 'cu128';
+    else                     tag = 'cu126';
+    sel.value = 'https://download.pytorch.org/whl/' + tag;
   } catch (e) { /* ignore — leave default */ }
 }
 

@@ -1695,6 +1695,16 @@ def create_app():
                 info["vram_gb"] = None
                 info["cuda_compute"] = None
                 info["bf16"] = False
+            # CUDA version the NVIDIA driver supports (nvidia-smi banner), used to pick the PyTorch wheel index
+            info["driver_cuda"] = None
+            try:
+                import re as _re, subprocess as _sp
+                _smi = _sp.run(["nvidia-smi"], capture_output=True, text=True, timeout=10).stdout
+                _m = _re.search(r"CUDA\s+(?:UMD\s+)?Version:\s*(\d+\.\d+)", _smi)
+                if _m:
+                    info["driver_cuda"] = _m.group(1)
+            except Exception:
+                pass
             # Recommendations
             vram = info.get("vram_gb") or 0
             ram  = info.get("ram_gb")  or 0

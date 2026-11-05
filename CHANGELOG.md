@@ -1,5 +1,11 @@
 # Changelog
 
+### 2026-11-04 — v1.2.2: Updater picks the right PyTorch build
+
+- **Fixed the in-app updater choosing the wrong PyTorch build.** The Package Manager read the GPU's compute capability (for example 8.9 on an RTX 4090, 12.0 on an RTX 5090) as if it were a CUDA version, so it could select the long-gone `cu118` or `cu124` builds. It now uses the CUDA version your NVIDIA driver supports, plus the card generation, with the same rules as the installer: `cu130` for drivers on CUDA 13.0 or newer, `cu128` for 12.8 and newer, and `cu126` for older drivers and for GTX 10xx/Titan V cards.
+- The PyTorch index list in the updater now offers `cu130`, `cu128` and `cu126` only (`cu124`, `cu121` and `cu118` are no longer published).
+- Verified with CUDA 13.5 drivers: nothing else needed changing.
+
 ### 2026-10-31 — v1.2.1: GPU kernel cache kept with the project
 
 - **No repeat of the first-load pause on RTX 50-series cards.** On the CUDA 12.4 llama.cpp build, Blackwell kernels are compiled by the NVIDIA driver the first time a model loads (about 20 s on an RTX 5090). The driver normally caches the result, so it happens once and not again after a reboot. But on machines that reset the user profile or disk on restart (rented or cloud GPU instances, some managed PCs) that cache is lost and the pause came back every time. The chat tester and the imatrix export step now keep the cache in `tools/llama-cuda/.cuda-cache` (size cap raised to 4 GB), so it survives restarts as long as the project folder does. Measured on an RTX 5090: 16 s on the first load, 0.5 s on the next. Your own `CUDA_CACHE_PATH` / `CUDA_CACHE_MAXSIZE` settings are respected.
