@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-11-04 — v1.2.3: README install example updated for CUDA 13
+
+- **README**: the manual PyTorch install example now uses the `cu130` build (drivers on CUDA 13.0 or newer), with a note to use `cu128` for CUDA 12.8-12.9 drivers and `cu126` for older drivers and GTX 10xx/Titan V cards. No code changes.
+
 ### 2026-11-04 — v1.2.2: Updater picks the right PyTorch build
 
 - **Fixed the in-app updater choosing the wrong PyTorch build.** The Package Manager read the GPU's compute capability (for example 8.9 on an RTX 4090, 12.0 on an RTX 5090) as if it were a CUDA version, so it could select the long-gone `cu118` or `cu124` builds. It now uses the CUDA version your NVIDIA driver supports, plus the card generation, with the same rules as the installer: `cu130` for drivers on CUDA 13.0 or newer, `cu128` for 12.8 and newer, and `cu126` for older drivers and for GTX 10xx/Titan V cards.
